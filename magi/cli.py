@@ -3,34 +3,31 @@ import os
 import sys
 
 import click
-from rich.console import Console
 
-from magi.core import consult_all, synthesize
-from magi.render import render_results
+from magi.repl import OPUS, SONNET, run_oneshot, run_repl
 
 
 @click.command()
-@click.argument("question", nargs=-1, required=True)
+@click.argument("question", nargs=-1, required=False)
 @click.option("--opus", is_flag=True, help="Use Claude Opus 4.7 (default: Sonnet 4.6)")
 def cli(question: tuple[str, ...], opus: bool) -> None:
     """MAGI — three-agent decision system inspired by Evangelion.
 
-    Consults Melchior (scientist), Balthasar (mother), and Casper (woman)
-    on a decision and returns their verdicts.
+    Run with no arguments to launch the interactive panel.
+    Pass a question in quotes for a one-shot consultation.
 
-    Example:
-        magi "should I take the job offer at X for Y?"
+    Examples:
+        magi
+        magi "should I take the job offer?"
+        magi --opus "should I quit my PhD?"
     """
     if not os.environ.get("ANTHROPIC_API_KEY"):
         click.echo("error: ANTHROPIC_API_KEY environment variable is not set", err=True)
         sys.exit(1)
 
-    question_str = " ".join(question)
-    model = "claude-opus-4-7" if opus else "claude-sonnet-4-6"
+    model = OPUS if opus else SONNET
 
-    console = Console()
-    with console.status(f"[cyan]The MAGI deliberate ({model})...[/cyan]"):
-        responses = asyncio.run(consult_all(question_str, model))
-
-    synthesis = synthesize(responses)
-    render_results(responses, synthesis, console)
+    if question:
+        asyncio.run(run_oneshot(" ".join(question), model))
+    else:
+        asyncio.run(run_repl(model))

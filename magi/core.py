@@ -1,5 +1,6 @@
 import asyncio
 from enum import Enum
+from typing import AsyncIterator
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
@@ -31,14 +32,32 @@ async def _consult(client: AsyncAnthropic, model: str, name: str, system: str, q
     return response.parsed_output
 
 
-async def consult_all(question: str, model: str) -> dict[str, PersonaResponse | Exception]:
+async def consult_all_streaming(
+    question: str, model: str
+) -> AsyncIterator[tuple[str, PersonaResponse | Exception]]:
+    """Yield (name, result) pairs in completion order."""
     async with AsyncAnthropic() as client:
-        tasks = [
-            _consult(client, model, name, system, question)
-            for name, system in PERSONAS.items()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-    return dict(zip(PERSONAS.keys(), results))
+        async def wrap(name: str, system: str):
+            try:
+                return name, await _consult(client, model, name, system, question)
+            except Exception as e:
+                return name, e
+
+        tasks = [asyncio.create_task(wrap(n, s)) for n, s in PERSONAS.items()]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+
+async def consult_all(question: str, model: str) -> dict[str, PersonaResponse | Exception]:
+    results: dict[str, PersonaResponse | Exception] = {}
+    async for name, result in consult_all_streaming(question, model):
+        results[name] = result
+    return results
 
 
 def synthesize(responses: dict[str, PersonaResponse | Exception]) -> str:
