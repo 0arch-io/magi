@@ -18,7 +18,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODELS = {
     "MELCHIOR": "qwen2.5:1.5b",     # Alibaba — small, fast, analytical
     "BALTHASAR": "llama3.2:3b",     # Meta — small, fast, decent reasoning
-    "CASPER": "gemma3:1b",          # Google — tiniest, different family
+    "CASPER": "mistral:latest",     # Mistral — bigger but reliable across multi-turn
 }
 
 
@@ -85,7 +85,7 @@ async def _consult(
             "stream": False,
             "options": {"temperature": 0.7},
         },
-        timeout=300.0,
+        timeout=90.0,
     )
     response.raise_for_status()
     content = response.json()["message"]["content"]
