@@ -27,6 +27,7 @@ BANNER = """[bold red]
 
 HELP_TEXT = """[bold]commands[/bold]
   [cyan]/help[/cyan]                  show this help
+  [cyan]/new[/cyan]                   start a fresh deliberation (clears prior thread)
   [cyan]/models[/cyan]                show current model assignments
   [cyan]/melchior[/cyan] <model>      assign a different model to Melchior
   [cyan]/balthasar[/cyan] <model>     assign a different model to Balthasar
@@ -35,7 +36,10 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/clear[/cyan]                 clear the screen
   [cyan]/exit[/cyan]                  exit the MAGI
 
-[bold]anything else[/bold] is taken as a question for the panel.
+[bold]conversation flow[/bold]
+  [red]❯[/red]   first question — opens a new deliberation
+  [red]❯❯[/red]  follow-up — the council sees the prior thread and reconsiders.
+       Verdicts can change. Type [cyan]/new[/cyan] to start fresh.
 """
 
 

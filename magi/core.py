@@ -16,8 +16,8 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # Three different model families = three genuinely independent perspectives.
 # Faithful to MAGI canon (three independent computers, not three personas of one).
 DEFAULT_MODELS = {
-    "MELCHIOR": "qwen2.5:7b",       # Alibaba — analytical, structured
-    "BALTHASAR": "llama3.1:8b",     # Meta — balanced, broad-knowledge
+    "MELCHIOR": "qwen2.5:7b",       # Alibaba — analytical
+    "BALTHASAR": "llama3.1:8b",     # Meta — balanced
     "CASPER": "mistral:latest",     # Mistral — different cultural lens
 }
 
@@ -34,6 +34,31 @@ class PersonaResponse(BaseModel):
     asks_in_return: str
 
 
+class Deliberation:
+    """Tracks the per-persona message history across multiple turns.
+
+    Each persona has its own conversation thread because each has its own
+    system prompt. When the user responds, all three see their own past
+    verdict and reconsider with the new context.
+    """
+
+    def __init__(self) -> None:
+        self.histories: dict[str, list[dict]] = {name: [] for name in PERSONAS}
+
+    def add_user_message(self, content: str) -> None:
+        for name in PERSONAS:
+            self.histories[name].append({"role": "user", "content": content})
+
+    def add_response(self, name: str, response: PersonaResponse) -> None:
+        # Serialize as JSON so the model sees its prior structured verdict
+        # and can stay coherent across turns.
+        self.histories[name].append({"role": "assistant", "content": response.model_dump_json()})
+
+    @property
+    def turn(self) -> int:
+        return sum(1 for m in self.histories["MELCHIOR"] if m["role"] == "user")
+
+
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -47,17 +72,14 @@ async def _consult(
     client: httpx.AsyncClient,
     model: str,
     system: str,
-    question: str,
+    messages: list[dict],
 ) -> PersonaResponse:
     schema = PersonaResponse.model_json_schema()
     response = await client.post(
         f"{OLLAMA_HOST}/api/chat",
         json={
             "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": question},
-            ],
+            "messages": [{"role": "system", "content": system}] + messages,
             "format": schema,
             "stream": False,
             "options": {"temperature": 0.7},
@@ -70,13 +92,16 @@ async def _consult(
 
 
 async def consult_all_streaming(
-    question: str, models: dict[str, str]
+    deliberation: Deliberation, models: dict[str, str]
 ) -> AsyncIterator[tuple[str, PersonaResponse | Exception]]:
-    """Yield (name, result) pairs in completion order."""
+    """Yield (name, result) pairs in completion order. Mutates the deliberation
+    by appending each successful response to that persona's history."""
     async with httpx.AsyncClient() as client:
         async def wrap(name: str):
             try:
-                return name, await _consult(client, models[name], PERSONAS[name], question)
+                result = await _consult(client, models[name], PERSONAS[name], deliberation.histories[name])
+                deliberation.add_response(name, result)
+                return name, result
             except Exception as e:
                 return name, e
 
@@ -88,13 +113,6 @@ async def consult_all_streaming(
             for t in tasks:
                 if not t.done():
                     t.cancel()
-
-
-async def consult_all(question: str, models: dict[str, str]) -> dict:
-    results: dict[str, PersonaResponse | Exception] = {}
-    async for name, result in consult_all_streaming(question, models):
-        results[name] = result
-    return results
 
 
 def synthesize(responses: dict[str, PersonaResponse | Exception]) -> str:
