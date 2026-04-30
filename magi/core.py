@@ -31,7 +31,7 @@ class Verdict(str, Enum):
 class PersonaResponse(BaseModel):
     verdict: Verdict
     reasoning: str
-    key_concern: str
+    asks_in_return: str
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)

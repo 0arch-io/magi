@@ -87,8 +87,8 @@ def _persona_panel(name: str, result: PersonaResponse | Exception) -> Panel:
     body = Text()
     body.append(f"VERDICT: {result.verdict.value}\n\n", style=f"bold {color}")
     body.append(result.reasoning + "\n\n")
-    body.append("KEY CONCERN: ", style="bold")
-    body.append(result.key_concern)
+    body.append("ASKS YOU: ", style="bold")
+    body.append(result.asks_in_return)
 
     return Panel(body, title=f"[bold {color}]{name}[/bold {color}]", border_style=color)
 
