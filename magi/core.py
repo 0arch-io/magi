@@ -1,11 +1,25 @@
 import asyncio
+import os
+import re
 from enum import Enum
 from typing import AsyncIterator
 
-from anthropic import AsyncAnthropic
+import httpx
 from pydantic import BaseModel
 
 from magi.personas import PERSONAS
+
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+
+
+# Three different model families = three genuinely independent perspectives.
+# Faithful to MAGI canon (three independent computers, not three personas of one).
+DEFAULT_MODELS = {
+    "MELCHIOR": "qwen2.5:7b",       # Alibaba — analytical, structured
+    "BALTHASAR": "llama3.1:8b",     # Meta — balanced, broad-knowledge
+    "CASPER": "mistral:latest",     # Mistral — different cultural lens
+}
 
 
 class Verdict(str, Enum):
@@ -20,30 +34,53 @@ class PersonaResponse(BaseModel):
     key_concern: str
 
 
-async def _consult(client: AsyncAnthropic, model: str, name: str, system: str, question: str) -> PersonaResponse:
-    response = await client.messages.parse(
-        model=model,
-        max_tokens=8192,
-        thinking={"type": "adaptive"},
-        system=system,
-        messages=[{"role": "user", "content": question}],
-        output_format=PersonaResponse,
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_thinking(text: str) -> str:
+    """Reasoning models (deepseek-r1, qwen3) emit <think>...</think> blocks
+    that can prefix the JSON output. Strip them defensively."""
+    return _THINK_BLOCK.sub("", text).strip()
+
+
+async def _consult(
+    client: httpx.AsyncClient,
+    model: str,
+    system: str,
+    question: str,
+) -> PersonaResponse:
+    schema = PersonaResponse.model_json_schema()
+    response = await client.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": question},
+            ],
+            "format": schema,
+            "stream": False,
+            "options": {"temperature": 0.7},
+        },
+        timeout=300.0,
     )
-    return response.parsed_output
+    response.raise_for_status()
+    content = response.json()["message"]["content"]
+    return PersonaResponse.model_validate_json(_strip_thinking(content))
 
 
 async def consult_all_streaming(
-    question: str, model: str
+    question: str, models: dict[str, str]
 ) -> AsyncIterator[tuple[str, PersonaResponse | Exception]]:
     """Yield (name, result) pairs in completion order."""
-    async with AsyncAnthropic() as client:
-        async def wrap(name: str, system: str):
+    async with httpx.AsyncClient() as client:
+        async def wrap(name: str):
             try:
-                return name, await _consult(client, model, name, system, question)
+                return name, await _consult(client, models[name], PERSONAS[name], question)
             except Exception as e:
                 return name, e
 
-        tasks = [asyncio.create_task(wrap(n, s)) for n, s in PERSONAS.items()]
+        tasks = [asyncio.create_task(wrap(n)) for n in PERSONAS.keys()]
         try:
             for coro in asyncio.as_completed(tasks):
                 yield await coro
@@ -53,9 +90,9 @@ async def consult_all_streaming(
                     t.cancel()
 
 
-async def consult_all(question: str, model: str) -> dict[str, PersonaResponse | Exception]:
+async def consult_all(question: str, models: dict[str, str]) -> dict:
     results: dict[str, PersonaResponse | Exception] = {}
-    async for name, result in consult_all_streaming(question, model):
+    async for name, result in consult_all_streaming(question, models):
         results[name] = result
     return results
 

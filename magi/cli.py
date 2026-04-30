@@ -1,17 +1,21 @@
 import asyncio
-import os
-import sys
 
 import click
 
-from magi.repl import OPUS, SONNET, run_oneshot, run_repl
+from magi.core import DEFAULT_MODELS
+from magi.repl import run_oneshot, run_repl
 
 
 @click.command()
 @click.argument("question", nargs=-1, required=False)
-@click.option("--opus", is_flag=True, help="Use Claude Opus 4.7 (default: Sonnet 4.6)")
-def cli(question: tuple[str, ...], opus: bool) -> None:
+@click.option("--melchior", default=None, help=f"Override Melchior's model (default: {DEFAULT_MODELS['MELCHIOR']})")
+@click.option("--balthasar", default=None, help=f"Override Balthasar's model (default: {DEFAULT_MODELS['BALTHASAR']})")
+@click.option("--casper", default=None, help=f"Override Casper's model (default: {DEFAULT_MODELS['CASPER']})")
+def cli(question: tuple[str, ...], melchior: str | None, balthasar: str | None, casper: str | None) -> None:
     """MAGI — three-agent decision system inspired by Evangelion.
+
+    Three independent open-source models served via Ollama deliberate on a
+    decision and return their verdicts.
 
     Run with no arguments to launch the interactive panel.
     Pass a question in quotes for a one-shot consultation.
@@ -19,15 +23,17 @@ def cli(question: tuple[str, ...], opus: bool) -> None:
     Examples:
         magi
         magi "should I take the job offer?"
-        magi --opus "should I quit my PhD?"
+        magi --melchior=qwen3:8b "should I quit my PhD?"
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        click.echo("error: ANTHROPIC_API_KEY environment variable is not set", err=True)
-        sys.exit(1)
-
-    model = OPUS if opus else SONNET
+    models = dict(DEFAULT_MODELS)
+    if melchior:
+        models["MELCHIOR"] = melchior
+    if balthasar:
+        models["BALTHASAR"] = balthasar
+    if casper:
+        models["CASPER"] = casper
 
     if question:
-        asyncio.run(run_oneshot(" ".join(question), model))
+        asyncio.run(run_oneshot(" ".join(question), models))
     else:
-        asyncio.run(run_repl(model))
+        asyncio.run(run_repl(models))

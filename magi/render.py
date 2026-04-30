@@ -1,4 +1,4 @@
-from rich.console import Console, Group
+from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
@@ -21,25 +21,40 @@ BANNER = """[bold red]
     ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝[/bold red]
 
     [dim]MELCHIOR  ·  BALTHASAR  ·  CASPER[/dim]
-    [dim]system online — awaiting query[/dim]
+    [dim]system online — three independent models via Ollama[/dim]
 """
 
 
 HELP_TEXT = """[bold]commands[/bold]
-  [cyan]/help[/cyan]      show this help
-  [cyan]/opus[/cyan]      switch to Claude Opus 4.7
-  [cyan]/sonnet[/cyan]    switch to Claude Sonnet 4.6
-  [cyan]/model[/cyan]     show current model
-  [cyan]/clear[/cyan]     clear the screen
-  [cyan]/exit[/cyan]      exit the MAGI
+  [cyan]/help[/cyan]                  show this help
+  [cyan]/models[/cyan]                show current model assignments
+  [cyan]/melchior[/cyan] <model>      assign a different model to Melchior
+  [cyan]/balthasar[/cyan] <model>     assign a different model to Balthasar
+  [cyan]/casper[/cyan] <model>        assign a different model to Casper
+  [cyan]/reset[/cyan]                 reset model assignments to defaults
+  [cyan]/clear[/cyan]                 clear the screen
+  [cyan]/exit[/cyan]                  exit the MAGI
 
 [bold]anything else[/bold] is taken as a question for the panel.
 """
 
 
-def print_banner(console: Console, model: str) -> None:
+def print_banner(console: Console, models: dict[str, str]) -> None:
     console.print(BANNER)
-    console.print(f"    [dim]model: [bold]{model}[/bold]  ·  /help for commands[/dim]\n")
+    console.print(
+        f"    [dim]MELCHIOR=[bold]{models['MELCHIOR']}[/bold]  "
+        f"BALTHASAR=[bold]{models['BALTHASAR']}[/bold]  "
+        f"CASPER=[bold]{models['CASPER']}[/bold][/dim]"
+    )
+    console.print("    [dim]/help for commands[/dim]\n")
+
+
+def print_models(console: Console, models: dict[str, str]) -> None:
+    text = Text()
+    for name in ("MELCHIOR", "BALTHASAR", "CASPER"):
+        text.append(f"  {name:<10}", style="bold")
+        text.append(f"  {models[name]}\n")
+    console.print(Panel(text, title="[bold]model assignments[/bold]", border_style="dim"))
 
 
 def status_panel(statuses: dict[str, str], results: dict) -> Panel:
