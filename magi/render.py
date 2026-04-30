@@ -9,6 +9,7 @@ VERDICT_COLOR = {
     Verdict.ACCEPT: "green",
     Verdict.REJECT: "red",
     Verdict.CONDITIONAL: "yellow",
+    Verdict.NEEDS_MORE: "blue",
 }
 
 
@@ -21,7 +22,7 @@ BANNER = """[bold red]
     ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝[/bold red]
 
     [dim]MELCHIOR  ·  BALTHASAR  ·  CASPER[/dim]
-    [dim]system online — three independent models via Ollama[/dim]
+    [dim]the board will see you now — pitch your decision[/dim]
 """
 
 
@@ -36,10 +37,17 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/clear[/cyan]                 clear the screen
   [cyan]/exit[/cyan]                  exit the MAGI
 
-[bold]conversation flow[/bold]
-  [red]❯[/red]   first question — opens a new deliberation
-  [red]❯❯[/red]  follow-up — the council sees the prior thread and reconsiders.
-       Verdicts can change. Type [cyan]/new[/cyan] to start fresh.
+[bold]how this works[/bold]
+  [red]❯[/red]   open a motion — pitch your decision to the board
+  [red]❯❯[/red]  defend the motion — argue back; the board reconsiders.
+       They will hold the line unless your argument is genuinely better.
+       Type [cyan]/new[/cyan] to drop the motion and start a fresh one.
+
+[bold]verdicts[/bold]
+  [green]ACCEPT[/green]       case is made; proceed
+  [red]REJECT[/red]       case is not made; do not proceed
+  [yellow]CONDITIONAL[/yellow]  proceed only if a specific thing is true or fixed first
+  [blue]NEEDS_MORE[/blue]   not voting yet — board needs more before they will rule
 """
 
 
