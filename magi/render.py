@@ -9,7 +9,6 @@ VERDICT_COLOR = {
     Verdict.ACCEPT: "green",
     Verdict.REJECT: "red",
     Verdict.CONDITIONAL: "yellow",
-    Verdict.NEEDS_MORE: "blue",
 }
 
 
@@ -22,7 +21,7 @@ BANNER = """[bold red]
     ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝[/bold red]
 
     [dim]MELCHIOR  ·  BALTHASAR  ·  CASPER[/dim]
-    [dim]the board will see you now — pitch your decision[/dim]
+    [dim]the council convenes — bring your question[/dim]
 """
 
 
@@ -38,16 +37,15 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/exit[/cyan]                  exit the MAGI
 
 [bold]how this works[/bold]
-  [red]❯[/red]   open a motion — pitch your decision to the board
-  [red]❯❯[/red]  defend the motion — argue back; the board reconsiders.
-       They will hold the line unless your argument is genuinely better.
-       Type [cyan]/new[/cyan] to drop the motion and start a fresh one.
+  [red]❯[/red]   bring a question — the council decides
+  [red]❯❯[/red]  argue back — they reconsider; verdicts can change if you
+       bring genuinely new info or expose a flaw. Just pressing harder
+       does not work. Type [cyan]/new[/cyan] for a fresh question.
 
 [bold]verdicts[/bold]
-  [green]ACCEPT[/green]       case is made; proceed
-  [red]REJECT[/red]       case is not made; do not proceed
-  [yellow]CONDITIONAL[/yellow]  proceed only if a specific thing is true or fixed first
-  [blue]NEEDS_MORE[/blue]   not voting yet — board needs more before they will rule
+  [green]ACCEPT[/green]       yes, do it
+  [red]REJECT[/red]       no, do not
+  [yellow]CONDITIONAL[/yellow]  yes if [a specific thing is true or done first]
 """
 
 

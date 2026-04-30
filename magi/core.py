@@ -26,7 +26,6 @@ class Verdict(str, Enum):
     ACCEPT = "ACCEPT"
     REJECT = "REJECT"
     CONDITIONAL = "CONDITIONAL"
-    NEEDS_MORE = "NEEDS_MORE"
 
 
 class PersonaResponse(BaseModel):
@@ -120,38 +119,24 @@ def synthesize(responses: dict[str, PersonaResponse | Exception]) -> str:
     verdicts = [r.verdict for r in responses.values() if isinstance(r, PersonaResponse)]
 
     if len(verdicts) < 3:
-        return f"INCOMPLETE — {3 - len(verdicts)} board member(s) failed to respond"
+        return f"INCOMPLETE — {3 - len(verdicts)} council member(s) failed to respond"
 
     accept = verdicts.count(Verdict.ACCEPT)
     reject = verdicts.count(Verdict.REJECT)
     conditional = verdicts.count(Verdict.CONDITIONAL)
-    needs_more = verdicts.count(Verdict.NEEDS_MORE)
 
-    tally_parts = []
-    if accept:
-        tally_parts.append(f"{accept}A")
-    if conditional:
-        tally_parts.append(f"{conditional}C")
-    if reject:
-        tally_parts.append(f"{reject}R")
-    if needs_more:
-        tally_parts.append(f"{needs_more}?")
-    tally = " · ".join(tally_parts) or "0"
+    tally = f"{accept}A · {conditional}C · {reject}R"
 
-    if needs_more == 3:
-        return f"MOTION TABLED — board needs more before voting  ({tally})"
-    if needs_more >= 2:
-        return f"MOTION DEFERRED — pending more info  ({tally})"
     if accept == 3:
-        return f"UNANIMOUS APPROVAL  ({tally})"
+        return f"UNANIMOUS YES  ({tally})"
     if reject == 3:
-        return f"UNANIMOUS REJECTION  ({tally})"
+        return f"UNANIMOUS NO  ({tally})"
     if conditional == 3:
         return f"UNANIMOUS CONDITIONAL  ({tally})"
     if accept >= 2 and reject == 0:
-        return f"MAJORITY APPROVAL  ({tally})"
+        return f"MAJORITY YES  ({tally})"
     if reject >= 2 and accept == 0:
-        return f"MAJORITY REJECTION  ({tally})"
+        return f"MAJORITY NO  ({tally})"
     if accept >= 1 and reject >= 1:
-        return f"BOARD SPLIT  ({tally})  →  cast the deciding vote"
+        return f"COUNCIL SPLIT  ({tally})  →  your call"
     return f"MIXED  ({tally})"
