@@ -5,7 +5,7 @@ from enum import Enum
 from typing import AsyncIterator
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from magi.personas import PERSONAS, get_system_prompt
 
@@ -27,17 +27,61 @@ class Verdict(str, Enum):
     CONDITIONAL = "CONDITIONAL"
 
 
+_BANNED_CONDITION_PHRASES = (
+    "clear plan", "clear vision", "manageable scope", "sufficient resources",
+    "realistic timeline", "long-term goals", "personal values",
+    "regularly reassess", "explore additional resources",
+    "concise mission statement", "balance ambition", "specific aspects",
+    "core values",
+)
+
+
+def _condition_is_vague(condition: str) -> bool:
+    if not condition.strip():
+        return True
+    low = condition.lower()
+    return any(phrase in low for phrase in _BANNED_CONDITION_PHRASES)
+
+
 class PersonaResponse(BaseModel):
     verdict: Verdict
-    reasoning: str = Field(..., description="1-3 sharp sentences. Direct. No preamble, no hedging, no follow-up questions to the user.")
-    condition: str = Field(default="", description="REQUIRED when verdict=CONDITIONAL: a single concrete blocker that flips your vote when removed. Examples: 'commit 10 hours/week', 'talk to your spouse first', 'get the contract reviewed'. Vague phrases like 'have a clear plan', 'manageable scope', 'sufficient resources' are FORBIDDEN — those are hedging. If you cannot name a concrete blocker, vote ACCEPT or REJECT. Empty string when verdict is ACCEPT or REJECT.")
+    reasoning: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 sharp DECLARATIVE sentences about the user's situation. State your read. Never end a sentence with '?'. Never ask the user clarifying questions. Minimum one complete sentence.",
+    )
+    condition: str = Field(
+        default="",
+        description="REQUIRED when verdict=CONDITIONAL: ONE concrete blocker tied to specifics in THIS user's question (their actual numbers, people, constraints, situation). NOT a generic life-advice template. Banned vague phrases: 'clear plan', 'clear vision', 'manageable scope', 'sufficient resources', 'realistic timeline', 'long-term goals', 'mission statement', 'balance ambition', 'core values'. If you cannot name a blocker tied to real specifics, vote ACCEPT or REJECT instead. Empty string when verdict is ACCEPT or REJECT.",
+    )
+
+    @model_validator(mode="after")
+    def _coerce_hedged_conditional(self):
+        if self.verdict == Verdict.CONDITIONAL and _condition_is_vague(self.condition):
+            self.verdict = Verdict.ACCEPT
+            self.condition = ""
+        return self
 
 
 class Rebuttal(BaseModel):
     """What a council member says to the others after seeing their current positions."""
-    response: str = Field(..., description="1-3 sentences responding to the others by name. Push back, hold your line. No questions to the user.")
+    response: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 DECLARATIVE sentences responding to the others by name. Push back, hold your line. Never address the user with questions. Never end a sentence with '?'. Minimum one complete sentence.",
+    )
     final_verdict: Verdict
-    condition: str = Field(default="", description="REQUIRED when final_verdict=CONDITIONAL: same rules as the initial vote. A single concrete blocker. No vague hedges. Empty string for ACCEPT or REJECT.")
+    condition: str = Field(
+        default="",
+        description="REQUIRED when final_verdict=CONDITIONAL: same rules as initial vote. A concrete blocker tied to specifics in THIS question, not a generic template. Banned vague phrases: same list as initial vote. Empty string for ACCEPT or REJECT.",
+    )
+
+    @model_validator(mode="after")
+    def _coerce_hedged_conditional(self):
+        if self.final_verdict == Verdict.CONDITIONAL and _condition_is_vague(self.condition):
+            self.final_verdict = Verdict.ACCEPT
+            self.condition = ""
+        return self
 
 
 class Deliberation:
