@@ -34,6 +34,8 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/dismiss[/cyan] <name>        remove a specialist from the council
   [cyan]/melchior[/cyan] <model>      assign a different model to a member
   [cyan]/reset[/cyan]                 reset to defaults; dismiss all specialists
+  [cyan]/journal[/cyan]               show your past deliberations
+  [cyan]/outcome[/cyan] <id> <text>   record what you actually did/didn't do
   [cyan]/clear[/cyan]                 clear the screen
   [cyan]/exit[/cyan]                  exit the MAGI
 
@@ -178,3 +180,23 @@ def render_synthesis(synthesis: str, outcome: str, console: Console) -> None:
 
 def print_help(console: Console) -> None:
     console.print(Panel(HELP_TEXT, border_style="dim"))
+
+
+def render_journal(entries: list[dict], console: Console) -> None:
+    if not entries:
+        console.print("[dim]journal is empty — your deliberations will be logged here[/dim]")
+        return
+    text = Text()
+    for entry in entries:
+        ts = entry.get("timestamp", "")[:16].replace("T", " ")
+        outcome = entry.get("outcome", "?")
+        outcome_color = "green" if outcome == "consensus" else "yellow" if outcome == "deadlock" else "dim"
+        text.append(f"  {entry.get('id', '?'):<8}  ", style="bold cyan")
+        text.append(f"{ts}  ", style="dim")
+        text.append(f"[{outcome.upper()}]\n", style=f"bold {outcome_color}")
+        text.append(f"            {entry.get('question', '')[:90]}\n", style="italic")
+        text.append(f"            {entry.get('synthesis', '')}\n", style="dim")
+        if entry.get("user_outcome"):
+            text.append(f"            ↳ outcome: {entry['user_outcome']}\n", style="bold green")
+        text.append("\n")
+    console.print(Panel(text, title="[bold]decision journal[/bold]", border_style="dim"))

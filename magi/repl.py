@@ -5,6 +5,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
+from magi import journal
 from magi.core import (
     DEFAULT_MODELS,
     Deliberation,
@@ -28,6 +29,7 @@ from magi.render import (
     print_models,
     render_debate_round,
     render_initial_votes,
+    render_journal,
     render_synthesis,
     vote_status_panel,
 )
@@ -83,6 +85,19 @@ def _handle_command(
         print_models(console, models)
     elif head in ("specialists", "council", "roster"):
         _print_council_roster(console, models)
+    elif head == "journal":
+        entries = journal.load_entries(limit=20)
+        render_journal(entries, console)
+    elif head == "outcome":
+        parts_arg = arg.split(maxsplit=1)
+        if len(parts_arg) < 2:
+            console.print("[red]usage: /outcome <id> <what you did>[/red]  [dim](e.g. /outcome a3f5b9c2 did it, no regrets)[/dim]")
+        else:
+            id_prefix, outcome_text = parts_arg
+            if journal.set_user_outcome(id_prefix, outcome_text):
+                console.print(f"[dim]outcome recorded for [bold]{id_prefix}[/bold][/dim]")
+            else:
+                console.print(f"[red]no entry found matching id [bold]{id_prefix}[/bold][/red]")
     elif head == "clear":
         console.clear()
         print_banner(console, models)
@@ -295,7 +310,32 @@ async def run_full_deliberation(
         console.print()
         render_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_verdicts, console)
 
-    render_synthesis(synthesize(final_positions, outcome=final_outcome), final_outcome, console)
+    synthesis_text = synthesize(final_positions, outcome=final_outcome)
+    render_synthesis(synthesis_text, final_outcome, console)
+
+    # Save this turn to the journal so it can be revisited.
+    sample_history = next(iter(deliberation.histories.values()), [])
+    user_msgs = [m["content"] for m in sample_history if m["role"] == "user"]
+    if user_msgs and final_positions:
+        last_user_msg = user_msgs[-1]
+        rounds_count = max(round_rebuttals.keys()) if round_rebuttals else 1
+        final_verdicts = {
+            name: r.verdict.value
+            for name, r in final_positions.items()
+            if isinstance(r, PersonaResponse)
+        }
+        try:
+            entry_id = journal.save_entry(
+                question=last_user_msg,
+                members=list(final_positions.keys()),
+                rounds=rounds_count,
+                outcome=final_outcome,
+                synthesis=synthesis_text,
+                final_verdicts=final_verdicts,
+            )
+            console.print(f"[dim]logged as {entry_id}  ·  /journal to review[/dim]")
+        except Exception as e:
+            console.print(f"[dim red]journal write failed: {e}[/dim red]")
 
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
