@@ -8,8 +8,8 @@ from magi.core import (
     Deliberation,
     PersonaResponse,
     Rebuttal,
-    _debate_round,
-    _vote_round,
+    Verdict,
+    iterative_deliberate,
     synthesize,
 )
 from magi.personas import PERSONAS
@@ -18,7 +18,7 @@ from magi.render import (
     print_banner,
     print_help,
     print_models,
-    render_debate,
+    render_debate_round,
     render_initial_votes,
     render_synthesis,
     vote_status_panel,
@@ -106,66 +106,119 @@ async def run_repl(initial_models: dict[str, str]) -> None:
 async def run_full_deliberation(
     deliberation: Deliberation, models: dict[str, str], console: Console
 ) -> None:
-    """Drive the two-round deliberation with live status displays for each round."""
+    """Drive iterative deliberation, rendering each round's status + panels live."""
     initial_votes: dict = {}
-    rebuttals: dict = {}
+    current_round = 1
+    round_rebuttals: dict[int, dict] = {}
+    previous_verdicts: dict[str, Verdict] = {}
+    final_outcome = "incomplete"
+    final_positions: dict = {}
 
-    # ROUND 1: independent votes, live status panel updates as each lands.
+    # Per-round Live contexts. We can't keep one Live across the whole
+    # deliberation because we want to render full panels between rounds.
     vote_statuses = {name: f"voting  [{models[name]}]" for name in PERSONAS}
-    with Live(vote_status_panel(vote_statuses, initial_votes), console=console, refresh_per_second=8) as live:
-        async for name, result in _vote_round(deliberation, models):
-            initial_votes[name] = result
-            if isinstance(result, Exception):
-                vote_statuses[name] = f"failed: {type(result).__name__}"
-            else:
-                vote_statuses[name] = f"{result.verdict.value}  [{models[name]}]"
-            live.update(vote_status_panel(vote_statuses, initial_votes))
+    live: Live | None = Live(vote_status_panel(vote_statuses, initial_votes), console=console, refresh_per_second=8)
+    live.__enter__()
 
-    console.print()
-    render_initial_votes(initial_votes, console)
-    console.print()
+    debate_statuses: dict[str, str] = {}
+    debate_round_num = 0
+    in_round_one = True
 
-    valid_voters = {n: v for n, v in initial_votes.items() if isinstance(v, PersonaResponse)}
-    if len(valid_voters) < 2:
-        # Not enough for debate — commit what we have and synthesize.
-        for name, response in valid_voters.items():
-            deliberation.commit_response(name, response)
-        render_synthesis(synthesize(initial_votes), console)
-        return
+    try:
+        async for event in iterative_deliberate(deliberation, models):
+            kind = event[0]
 
-    # ROUND 2
-    debate_statuses = {name: f"debating  [{models[name]}]" for name in valid_voters}
-    with Live(debate_status_panel(debate_statuses, rebuttals), console=console, refresh_per_second=8) as live:
-        async for name, payload in _debate_round(deliberation, models, valid_voters):
-            rebuttals[name] = payload
-            if isinstance(payload, Exception):
-                debate_statuses[name] = f"failed: {type(payload).__name__}"
-            elif isinstance(payload, Rebuttal):
-                arrow = "→" if payload.final_verdict == valid_voters[name].verdict else "⇒"
-                debate_statuses[name] = f"{arrow} {payload.final_verdict.value}  [{models[name]}]"
-            live.update(debate_status_panel(debate_statuses, rebuttals))
+            if kind == "round_start":
+                round_num = event[1]
+                if round_num == 1:
+                    # Live already started for round 1; nothing more to do.
+                    continue
 
-    console.print()
-    render_debate(initial_votes, rebuttals, console)
+                # Round N≥2: previous round's Live is closed, render that round's panels, open a new Live for this round.
+                if live is not None:
+                    live.__exit__(None, None, None)
+                    live = None
 
-    # Commit FINAL responses (post-debate) to history.
-    final_responses: dict[str, PersonaResponse] = {}
-    for name in valid_voters:
-        rebuttal = rebuttals.get(name)
-        initial = valid_voters[name]
-        if isinstance(rebuttal, Rebuttal):
-            final = PersonaResponse(
-                verdict=rebuttal.final_verdict,
-                reasoning=initial.reasoning,
-                asks_in_return=initial.asks_in_return,
-            )
-            final_responses[name] = final
-            deliberation.commit_response(name, final)
-        else:
-            final_responses[name] = initial
-            deliberation.commit_response(name, initial)
+                if in_round_one:
+                    console.print()
+                    render_initial_votes(initial_votes, console)
+                    console.print()
+                    # Populate previous_verdicts with round-1 initial votes so that
+                    # round 2 panels can show "(changed from X)" or "(held)".
+                    for name, response in initial_votes.items():
+                        if isinstance(response, PersonaResponse):
+                            previous_verdicts[name] = response.verdict
+                    in_round_one = False
+                else:
+                    console.print()
+                    render_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_verdicts, console)
+                    console.print()
+                    # Update previous_verdicts to the round we just rendered, so
+                    # the NEXT round's render can compare against it.
+                    for name, rebuttal in round_rebuttals[debate_round_num].items():
+                        if isinstance(rebuttal, Rebuttal):
+                            previous_verdicts[name] = rebuttal.final_verdict
 
-    render_synthesis(synthesize(final_responses), console)
+                debate_round_num = round_num
+                round_rebuttals[round_num] = {}
+                debate_statuses = {name: f"debating  [{models[name]}]" for name in initial_votes if isinstance(initial_votes[name], PersonaResponse)}
+                live = Live(
+                    debate_status_panel(debate_statuses, round_rebuttals[round_num], round_num),
+                    console=console,
+                    refresh_per_second=8,
+                )
+                live.__enter__()
+
+            elif kind == "vote":
+                _, name, payload = event
+                initial_votes[name] = payload
+                if isinstance(payload, Exception):
+                    vote_statuses[name] = f"failed: {type(payload).__name__}"
+                else:
+                    vote_statuses[name] = f"{payload.verdict.value}  [{models[name]}]"
+                if live is not None:
+                    live.update(vote_status_panel(vote_statuses, initial_votes))
+
+            elif kind == "rebuttal":
+                _, name, payload = event
+                round_rebuttals[debate_round_num][name] = payload
+                if isinstance(payload, Exception):
+                    debate_statuses[name] = f"failed: {type(payload).__name__}"
+                elif isinstance(payload, Rebuttal):
+                    prev = previous_verdicts.get(name)
+                    if prev is None:
+                        # First debate round — compare against initial vote
+                        initial = initial_votes.get(name)
+                        if isinstance(initial, PersonaResponse):
+                            prev = initial.verdict
+                    arrow = "→" if prev == payload.final_verdict else "⇒"
+                    debate_statuses[name] = f"{arrow} {payload.final_verdict.value}  [{models[name]}]"
+                if live is not None:
+                    live.update(debate_status_panel(debate_statuses, round_rebuttals[debate_round_num], debate_round_num))
+
+            elif kind == "done":
+                _, outcome, positions = event
+                final_outcome = outcome
+                final_positions = positions
+    finally:
+        if live is not None:
+            live.__exit__(None, None, None)
+            live = None
+
+    # After the loop ends, render whatever round we were on.
+    if in_round_one:
+        console.print()
+        render_initial_votes(initial_votes, console)
+    else:
+        console.print()
+        # previous_verdicts may not yet reflect the very last round; rebuild from round_rebuttals chain.
+        # Safer: pass an empty previous_verdicts so all show as "held" or comparison happens up the stack.
+        # Compute the comparison verdicts as the "before" state of THIS round, which is the verdicts AFTER the previous round.
+        # We've been updating previous_verdicts at each round_start transition, so it should already reflect the
+        # round before debate_round_num — exactly right.
+        render_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_verdicts, console)
+
+    render_synthesis(synthesize(final_positions, outcome=final_outcome), final_outcome, console)
 
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
