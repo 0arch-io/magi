@@ -2,6 +2,8 @@ import asyncio
 
 from rich.console import Console
 from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
 
 from magi.core import (
     DEFAULT_MODELS,
@@ -12,7 +14,13 @@ from magi.core import (
     iterative_deliberate,
     synthesize,
 )
-from magi.personas import PERSONAS
+from magi.personas import (
+    PERSONAS,
+    SPECIALIST_DEFAULT_MODELS,
+    SPECIALIST_DESCRIPTIONS,
+    SPECIALISTS,
+    is_core_member,
+)
 from magi.render import (
     debate_status_panel,
     print_banner,
@@ -23,6 +31,36 @@ from magi.render import (
     render_synthesis,
     vote_status_panel,
 )
+
+
+def _print_council_roster(console: Console, models: dict[str, str]) -> None:
+    text = Text()
+    text.append("CORE\n", style="bold cyan")
+    for name in ("MELCHIOR", "BALTHASAR", "CASPER"):
+        if name in models:
+            text.append(f"  {name:<11} ", style="bold")
+            text.append(f"{models[name]}\n", style="dim")
+
+    invited = [n for n in models if not is_core_member(n)]
+    if invited:
+        text.append("\nINVITED SPECIALISTS\n", style="bold magenta")
+        for name in invited:
+            desc = SPECIALIST_DESCRIPTIONS.get(name, "")
+            text.append(f"  {name:<11} ", style="bold")
+            text.append(f"{models[name]}", style="dim")
+            if desc:
+                text.append(f"  — {desc}", style="dim italic")
+            text.append("\n")
+
+    available = [s for s in SPECIALISTS if s not in models]
+    if available:
+        text.append("\nAVAILABLE TO INVITE\n", style="bold")
+        for name in available:
+            desc = SPECIALIST_DESCRIPTIONS.get(name, "")
+            text.append(f"  /invite {name.lower():<11}", style="cyan")
+            text.append(f"  {desc}\n", style="dim italic")
+
+    console.print(Panel(text, title="[bold]council[/bold]", border_style="dim"))
 
 
 def _handle_command(
@@ -43,6 +81,8 @@ def _handle_command(
         print_help(console)
     elif head == "models":
         print_models(console, models)
+    elif head in ("specialists", "council", "roster"):
+        _print_council_roster(console, models)
     elif head == "clear":
         console.clear()
         print_banner(console, models)
@@ -52,20 +92,69 @@ def _handle_command(
         else:
             console.print("[dim]new deliberation[/dim]")
         deliberation = None
-    elif head in ("melchior", "balthasar", "casper"):
+    elif head == "invite":
+        if not arg:
+            console.print("[red]usage: /invite <specialist>[/red]  [dim](e.g. /invite banker)[/dim]")
+            console.print(f"  [dim]available: {', '.join(s.lower() for s in SPECIALISTS)}[/dim]")
+        else:
+            specialist = arg.upper()
+            if specialist not in SPECIALISTS:
+                console.print(f"[red]unknown specialist: {arg}[/red]")
+                console.print(f"  [dim]available: {', '.join(s.lower() for s in SPECIALISTS)}[/dim]")
+            elif specialist in models:
+                console.print(f"[dim]{specialist} is already in the council[/dim]")
+            else:
+                models[specialist] = SPECIALIST_DEFAULT_MODELS[specialist]
+                if deliberation is not None:
+                    deliberation.add_member(specialist)
+                desc = SPECIALIST_DESCRIPTIONS.get(specialist, "")
+                console.print(f"[bold magenta]{specialist}[/bold magenta] joins the council  [dim]({desc})[/dim]")
+    elif head == "dismiss":
+        if not arg:
+            console.print("[red]usage: /dismiss <specialist>[/red]")
+        else:
+            specialist = arg.upper()
+            if is_core_member(specialist):
+                console.print(f"[red]cannot dismiss core MAGI member {specialist}[/red]")
+            elif specialist not in models:
+                console.print(f"[dim]{specialist} is not in the council[/dim]")
+            else:
+                models.pop(specialist)
+                if deliberation is not None:
+                    deliberation.remove_member(specialist)
+                console.print(f"[dim]{specialist} leaves the council[/dim]")
+    elif head in PERSONAS_LOWER:
+        canonical = head.upper()
         if not arg:
             console.print(f"[red]usage: /{head} <model>[/red]  [dim](e.g. /{head} qwen3:8b)[/dim]")
         else:
-            models[head.upper()] = arg
-            console.print(f"[dim]{head.upper()} → [bold]{arg}[/bold][/dim]")
+            models[canonical] = arg
+            console.print(f"[dim]{canonical} → [bold]{arg}[/bold][/dim]")
+    elif head in SPECIALISTS_LOWER and head in [s.lower() for s in models if not is_core_member(s)]:
+        # /banker <model> works only if banker is invited
+        canonical = head.upper()
+        if not arg:
+            console.print(f"[red]usage: /{head} <model>[/red]")
+        else:
+            models[canonical] = arg
+            console.print(f"[dim]{canonical} → [bold]{arg}[/bold][/dim]")
     elif head == "reset":
-        models = dict(DEFAULT_MODELS)
-        console.print("[dim]models reset to defaults[/dim]")
+        models.clear()
+        models.update(DEFAULT_MODELS)
+        if deliberation is not None:
+            for name in list(deliberation.histories):
+                if not is_core_member(name):
+                    deliberation.remove_member(name)
+        console.print("[dim]models reset; specialists dismissed[/dim]")
         print_models(console, models)
     else:
         console.print(f"[red]unknown command: /{head}[/red]  [dim](try /help)[/dim]")
 
     return models, deliberation, True
+
+
+PERSONAS_LOWER = {n.lower() for n in PERSONAS}
+SPECIALISTS_LOWER = {n.lower() for n in SPECIALISTS}
 
 
 async def run_repl(initial_models: dict[str, str]) -> None:
@@ -93,7 +182,7 @@ async def run_repl(initial_models: dict[str, str]) -> None:
             continue
 
         if deliberation is None:
-            deliberation = Deliberation()
+            deliberation = Deliberation(list(models.keys()))
 
         deliberation.add_user_message(line)
 
@@ -108,15 +197,12 @@ async def run_full_deliberation(
 ) -> None:
     """Drive iterative deliberation, rendering each round's status + panels live."""
     initial_votes: dict = {}
-    current_round = 1
     round_rebuttals: dict[int, dict] = {}
     previous_verdicts: dict[str, Verdict] = {}
     final_outcome = "incomplete"
     final_positions: dict = {}
 
-    # Per-round Live contexts. We can't keep one Live across the whole
-    # deliberation because we want to render full panels between rounds.
-    vote_statuses = {name: f"voting  [{models[name]}]" for name in PERSONAS}
+    vote_statuses = {name: f"voting  [{models[name]}]" for name in models}
     live: Live | None = Live(vote_status_panel(vote_statuses, initial_votes), console=console, refresh_per_second=8)
     live.__enter__()
 
@@ -131,10 +217,8 @@ async def run_full_deliberation(
             if kind == "round_start":
                 round_num = event[1]
                 if round_num == 1:
-                    # Live already started for round 1; nothing more to do.
                     continue
 
-                # Round N≥2: previous round's Live is closed, render that round's panels, open a new Live for this round.
                 if live is not None:
                     live.__exit__(None, None, None)
                     live = None
@@ -143,8 +227,6 @@ async def run_full_deliberation(
                     console.print()
                     render_initial_votes(initial_votes, console)
                     console.print()
-                    # Populate previous_verdicts with round-1 initial votes so that
-                    # round 2 panels can show "(changed from X)" or "(held)".
                     for name, response in initial_votes.items():
                         if isinstance(response, PersonaResponse):
                             previous_verdicts[name] = response.verdict
@@ -153,15 +235,17 @@ async def run_full_deliberation(
                     console.print()
                     render_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_verdicts, console)
                     console.print()
-                    # Update previous_verdicts to the round we just rendered, so
-                    # the NEXT round's render can compare against it.
                     for name, rebuttal in round_rebuttals[debate_round_num].items():
                         if isinstance(rebuttal, Rebuttal):
                             previous_verdicts[name] = rebuttal.final_verdict
 
                 debate_round_num = round_num
                 round_rebuttals[round_num] = {}
-                debate_statuses = {name: f"debating  [{models[name]}]" for name in initial_votes if isinstance(initial_votes[name], PersonaResponse)}
+                debate_statuses = {
+                    name: f"debating  [{models[name]}]"
+                    for name in initial_votes
+                    if isinstance(initial_votes[name], PersonaResponse)
+                }
                 live = Live(
                     debate_status_panel(debate_statuses, round_rebuttals[round_num], round_num),
                     console=console,
@@ -187,7 +271,6 @@ async def run_full_deliberation(
                 elif isinstance(payload, Rebuttal):
                     prev = previous_verdicts.get(name)
                     if prev is None:
-                        # First debate round — compare against initial vote
                         initial = initial_votes.get(name)
                         if isinstance(initial, PersonaResponse):
                             prev = initial.verdict
@@ -205,17 +288,11 @@ async def run_full_deliberation(
             live.__exit__(None, None, None)
             live = None
 
-    # After the loop ends, render whatever round we were on.
     if in_round_one:
         console.print()
         render_initial_votes(initial_votes, console)
     else:
         console.print()
-        # previous_verdicts may not yet reflect the very last round; rebuild from round_rebuttals chain.
-        # Safer: pass an empty previous_verdicts so all show as "held" or comparison happens up the stack.
-        # Compute the comparison verdicts as the "before" state of THIS round, which is the verdicts AFTER the previous round.
-        # We've been updating previous_verdicts at each round_start transition, so it should already reflect the
-        # round before debate_round_num — exactly right.
         render_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_verdicts, console)
 
     render_synthesis(synthesize(final_positions, outcome=final_outcome), final_outcome, console)
@@ -223,6 +300,6 @@ async def run_full_deliberation(
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
     console = Console()
-    deliberation = Deliberation()
+    deliberation = Deliberation(list(models.keys()))
     deliberation.add_user_message(question)
     await run_full_deliberation(deliberation, models, console)

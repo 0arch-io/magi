@@ -7,7 +7,7 @@ from typing import AsyncIterator
 import httpx
 from pydantic import BaseModel
 
-from magi.personas import PERSONAS
+from magi.personas import PERSONAS, get_system_prompt
 
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -40,19 +40,41 @@ class Rebuttal(BaseModel):
 
 
 class Deliberation:
-    def __init__(self) -> None:
-        self.histories: dict[str, list[dict]] = {name: [] for name in PERSONAS}
+    """Tracks per-member message history across multiple turns. Members are
+    typically the 3 core MAGI plus any specialists invited via /invite."""
+
+    def __init__(self, member_names: list[str]) -> None:
+        self.histories: dict[str, list[dict]] = {name: [] for name in member_names}
 
     def add_user_message(self, content: str) -> None:
-        for name in PERSONAS:
+        for name in self.histories:
             self.histories[name].append({"role": "user", "content": content})
 
     def commit_response(self, name: str, response: PersonaResponse) -> None:
         self.histories[name].append({"role": "assistant", "content": response.model_dump_json()})
 
+    def add_member(self, name: str) -> None:
+        """Add a new member mid-deliberation. They get backfilled with the prior
+        USER messages so they have the same context, but no fabricated assistant
+        responses (since they did not say anything yet)."""
+        if name in self.histories:
+            return
+        if self.histories:
+            sample = next(iter(self.histories.values()))
+            self.histories[name] = [m for m in sample if m["role"] == "user"]
+        else:
+            self.histories[name] = []
+
+    def remove_member(self, name: str) -> None:
+        self.histories.pop(name, None)
+
     @property
     def turn(self) -> int:
-        return sum(1 for m in self.histories["MELCHIOR"] if m["role"] == "user")
+        if "MELCHIOR" in self.histories:
+            return sum(1 for m in self.histories["MELCHIOR"] if m["role"] == "user")
+        if self.histories:
+            return sum(1 for m in next(iter(self.histories.values())) if m["role"] == "user")
+        return 0
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -151,11 +173,11 @@ async def _vote_round(
     async with httpx.AsyncClient() as client:
         async def wrap(name: str):
             try:
-                return name, await _consult(client, models[name], PERSONAS[name], deliberation.histories[name])
+                return name, await _consult(client, models[name], get_system_prompt(name), deliberation.histories[name])
             except Exception as e:
                 return name, e
 
-        tasks = [asyncio.create_task(wrap(n)) for n in PERSONAS.keys()]
+        tasks = [asyncio.create_task(wrap(n)) for n in models.keys()]
         try:
             for coro in asyncio.as_completed(tasks):
                 yield await coro
@@ -176,7 +198,7 @@ async def _debate_round(
             own = current_positions[name]
             others = {n: v for n, v in current_positions.items() if n != name}
             try:
-                return name, await _rebut(client, models[name], PERSONAS[name], deliberation.histories[name], own, others, round_num)
+                return name, await _rebut(client, models[name], get_system_prompt(name), deliberation.histories[name], own, others, round_num)
             except Exception as e:
                 return name, e
 

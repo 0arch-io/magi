@@ -29,10 +29,11 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/help[/cyan]                  show this help
   [cyan]/new[/cyan]                   start a fresh deliberation
   [cyan]/models[/cyan]                show current model assignments
-  [cyan]/melchior[/cyan] <model>      assign a different model to Melchior
-  [cyan]/balthasar[/cyan] <model>     assign a different model to Balthasar
-  [cyan]/casper[/cyan] <model>        assign a different model to Casper
-  [cyan]/reset[/cyan]                 reset model assignments to defaults
+  [cyan]/specialists[/cyan]           list specialists you can invite
+  [cyan]/invite[/cyan] <name>         invite a specialist (banker, therapist, lawyer, coach, doctor)
+  [cyan]/dismiss[/cyan] <name>        remove a specialist from the council
+  [cyan]/melchior[/cyan] <model>      assign a different model to a member
+  [cyan]/reset[/cyan]                 reset to defaults; dismiss all specialists
   [cyan]/clear[/cyan]                 clear the screen
   [cyan]/exit[/cyan]                  exit the MAGI
 

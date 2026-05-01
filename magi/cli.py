@@ -3,6 +3,7 @@ import asyncio
 import click
 
 from magi.core import DEFAULT_MODELS
+from magi.personas import SPECIALIST_DEFAULT_MODELS, SPECIALISTS
 from magi.repl import run_oneshot, run_repl
 
 
@@ -11,19 +12,23 @@ from magi.repl import run_oneshot, run_repl
 @click.option("--melchior", default=None, help=f"Override Melchior's model (default: {DEFAULT_MODELS['MELCHIOR']})")
 @click.option("--balthasar", default=None, help=f"Override Balthasar's model (default: {DEFAULT_MODELS['BALTHASAR']})")
 @click.option("--casper", default=None, help=f"Override Casper's model (default: {DEFAULT_MODELS['CASPER']})")
-def cli(question: tuple[str, ...], melchior: str | None, balthasar: str | None, casper: str | None) -> None:
-    """MAGI — three-agent decision system inspired by Evangelion.
+@click.option("--invite", multiple=True, help=f"Invite a specialist (one of: {', '.join(s.lower() for s in SPECIALISTS)}). Repeatable.")
+def cli(
+    question: tuple[str, ...],
+    melchior: str | None,
+    balthasar: str | None,
+    casper: str | None,
+    invite: tuple[str, ...],
+) -> None:
+    """MAGI — three-agent decision council inspired by Evangelion.
 
-    Three independent open-source models served via Ollama deliberate on a
-    decision and return their verdicts.
-
-    Run with no arguments to launch the interactive panel.
-    Pass a question in quotes for a one-shot consultation.
+    Three open-source models served via Ollama deliberate on a question.
+    They argue across multiple rounds until consensus or deadlock.
 
     Examples:
         magi
         magi "should I take the job offer?"
-        magi --melchior=qwen3:8b "should I quit my PhD?"
+        magi --invite banker --invite therapist "should I move cities?"
     """
     models = dict(DEFAULT_MODELS)
     if melchior:
@@ -32,6 +37,13 @@ def cli(question: tuple[str, ...], melchior: str | None, balthasar: str | None, 
         models["BALTHASAR"] = balthasar
     if casper:
         models["CASPER"] = casper
+
+    for spec in invite:
+        canonical = spec.upper()
+        if canonical not in SPECIALISTS:
+            click.echo(f"warning: unknown specialist {spec!r}; available: {', '.join(s.lower() for s in SPECIALISTS)}", err=True)
+            continue
+        models[canonical] = SPECIALIST_DEFAULT_MODELS[canonical]
 
     if question:
         asyncio.run(run_oneshot(" ".join(question), models))
