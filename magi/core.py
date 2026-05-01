@@ -11,13 +11,13 @@ from magi.personas import PERSONAS, get_system_prompt
 
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-MAX_DELIBERATION_ROUNDS = 4  # 1 vote + up to 3 debate rounds
+MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
 
 
 DEFAULT_MODELS = {
-    "MELCHIOR": "qwen2.5:1.5b",     # Alibaba — small, fast, analytical
-    "BALTHASAR": "llama3.2:3b",     # Meta — small, fast, decent reasoning
-    "CASPER": "mistral:latest",     # Mistral — bigger but reliable across multi-turn
+    "MELCHIOR": "qwen2.5:7b",       # Alibaba — 7B for reliable multi-round debate + identity rule
+    "BALTHASAR": "llama3.2:3b",     # Meta — small + fast; user can /balthasar llama3.1:8b for higher rigor
+    "CASPER": "mistral:latest",     # Mistral 7B — different family, reliable across multi-turn
 }
 
 
