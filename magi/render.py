@@ -118,9 +118,11 @@ def _persona_panel(name: str, result: PersonaResponse | Exception) -> Panel:
     color = VERDICT_COLOR[result.verdict]
     body = Text()
     body.append(f"VERDICT: {result.verdict.value}\n\n", style=f"bold {color}")
-    body.append(result.reasoning + "\n\n")
-    body.append("ASKS YOU: ", style="bold")
-    body.append(result.asks_in_return)
+    body.append(result.reasoning)
+    if result.verdict == Verdict.CONDITIONAL and result.condition:
+        body.append("\n\n")
+        body.append("ONLY IF: ", style=f"bold {color}")
+        body.append(result.condition)
 
     return Panel(body, title=f"[bold {color}]{name}[/bold {color}]", border_style=color)
 
@@ -148,6 +150,10 @@ def _debate_panel(
         body.append(f"   (changed from {previous_verdict.value})", style="bold yellow")
     elif previous_verdict is not None:
         body.append("   (held)", style="dim")
+    if rebuttal.final_verdict == Verdict.CONDITIONAL and rebuttal.condition:
+        body.append("\n\n")
+        body.append("ONLY IF: ", style=f"bold {color}")
+        body.append(rebuttal.condition)
 
     return Panel(
         body,

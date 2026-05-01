@@ -5,7 +5,7 @@ from enum import Enum
 from typing import AsyncIterator
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from magi.personas import PERSONAS, get_system_prompt
 
@@ -29,14 +29,15 @@ class Verdict(str, Enum):
 
 class PersonaResponse(BaseModel):
     verdict: Verdict
-    reasoning: str
-    asks_in_return: str
+    reasoning: str = Field(..., description="1-3 sharp sentences. Direct. No preamble, no hedging, no follow-up questions to the user.")
+    condition: str = Field(default="", description="REQUIRED when verdict=CONDITIONAL: a single concrete blocker that flips your vote when removed. Examples: 'commit 10 hours/week', 'talk to your spouse first', 'get the contract reviewed'. Vague phrases like 'have a clear plan', 'manageable scope', 'sufficient resources' are FORBIDDEN — those are hedging. If you cannot name a concrete blocker, vote ACCEPT or REJECT. Empty string when verdict is ACCEPT or REJECT.")
 
 
 class Rebuttal(BaseModel):
     """What a council member says to the others after seeing their current positions."""
-    response: str
+    response: str = Field(..., description="1-3 sentences responding to the others by name. Push back, hold your line. No questions to the user.")
     final_verdict: Verdict
+    condition: str = Field(default="", description="REQUIRED when final_verdict=CONDITIONAL: same rules as the initial vote. A single concrete blocker. No vague hedges. Empty string for ACCEPT or REJECT.")
 
 
 class Deliberation:
@@ -122,13 +123,23 @@ async def _rebut(
         for name, r in others.items()
     )
 
+    identity_anchor = (
+        "REMEMBER: you are speaking ABOUT the user's situation. "
+        "Use 'they' / 'the user' / 'their'. Never 'I' / 'my' / 'we'. "
+        "The facts in this question belong to the user, not you."
+    )
+
     if round_num == 2:
         opener = "The other council members have just voted. Here is what they said:"
         closer = (
-            "Now respond to them. Address them by name. Push back on what you disagree "
-            "with, agree with what is right, point out what they missed. Stay in your "
-            "lens, keep it 1-3 sentences. Then give your final verdict for this round — "
-            "keep it the same OR change it if their argument moved you."
+            "Address them by name. Push back on what you disagree with. Point out "
+            "what they missed. Stay in your lens. 1-3 sentences.\n\n"
+            "Then give your final verdict for this round. HOLD YOUR LINE unless a "
+            "real argument was made that exposed new information or a flaw in your "
+            "reasoning. Convergence for its own sake is failure — if you still "
+            "believe your verdict, keep it. Drifting to CONDITIONAL because others "
+            "did is hedging, not deliberating. If you do vote CONDITIONAL, you must "
+            "name ONE concrete blocker — no vague hedges."
         )
     else:
         opener = (
@@ -136,13 +147,15 @@ async def _rebut(
             "latest positions:"
         )
         closer = (
-            "Respond to the latest points raised. Push toward agreement where you "
-            "can, hold the line on real disagreements. The deliberation ends at "
-            f"round {MAX_DELIBERATION_ROUNDS} — sharpen your position. 1-3 sentences. "
-            "Final verdict: same as last round OR updated based on what was said."
+            "Respond to the latest points. HOLD YOUR LINE unless a real argument "
+            "exposed new information or a flaw. Convergence for its own sake is "
+            "failure. Stay in your lens. 1-3 sentences.\n\n"
+            "Final verdict: same as last round OR updated only if you were "
+            "genuinely persuaded by a specific argument. If CONDITIONAL, name ONE "
+            "concrete blocker."
         )
 
-    debate_prompt = f"{opener}\n\n{others_text}\n\n{closer}"
+    debate_prompt = f"{identity_anchor}\n\n{opener}\n\n{others_text}\n\n{closer}"
 
     schema = Rebuttal.model_json_schema()
     debate_messages = (
@@ -258,10 +271,11 @@ async def iterative_deliberate(
             yield ("rebuttal", name, rebuttal)
             if isinstance(rebuttal, Rebuttal):
                 prev = current_positions[name]
+                new_condition = rebuttal.condition if rebuttal.final_verdict == Verdict.CONDITIONAL else ""
                 current_positions[name] = PersonaResponse(
                     verdict=rebuttal.final_verdict,
                     reasoning=prev.reasoning,
-                    asks_in_return=prev.asks_in_return,
+                    condition=new_condition,
                 )
 
         if _is_consensus(current_positions):
