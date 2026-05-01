@@ -6,36 +6,23 @@ from rich.live import Live
 from magi.core import (
     DEFAULT_MODELS,
     Deliberation,
-    consult_all_streaming,
+    PersonaResponse,
+    Rebuttal,
+    _debate_round,
+    _vote_round,
     synthesize,
 )
 from magi.personas import PERSONAS
 from magi.render import (
+    debate_status_panel,
     print_banner,
     print_help,
     print_models,
-    render_results,
-    status_panel,
+    render_debate,
+    render_initial_votes,
+    render_synthesis,
+    vote_status_panel,
 )
-
-
-async def consult_with_live_status(
-    deliberation: Deliberation, models: dict[str, str], console: Console
-) -> None:
-    statuses = {name: f"deliberating  [{models[name]}]" for name in PERSONAS}
-    results: dict = {}
-
-    with Live(status_panel(statuses, results), console=console, refresh_per_second=8) as live:
-        async for name, result in consult_all_streaming(deliberation, models):
-            results[name] = result
-            if isinstance(result, Exception):
-                statuses[name] = f"failed: {type(result).__name__}: {result}"
-            else:
-                statuses[name] = f"{result.verdict.value}  [{models[name]}]"
-            live.update(status_panel(statuses, results))
-
-    console.print()
-    render_results(results, synthesize(results), console)
 
 
 def _handle_command(
@@ -44,7 +31,6 @@ def _handle_command(
     deliberation: Deliberation | None,
     console: Console,
 ) -> tuple[dict, Deliberation | None, bool]:
-    """Returns (new_models, new_deliberation, should_continue)."""
     parts = cmd.lower().strip().split(maxsplit=1)
     head = parts[0] if parts else ""
     arg = parts[1] if len(parts) > 1 else ""
@@ -90,7 +76,6 @@ async def run_repl(initial_models: dict[str, str]) -> None:
     deliberation: Deliberation | None = None
 
     while True:
-        # Visual cue: ❯ for new question, ❯❯ for follow-up in active deliberation.
         prompt = "[bold red]❯❯[/bold red] " if deliberation is not None else "[bold red]❯[/bold red] "
         try:
             line = console.input(prompt).strip()
@@ -113,13 +98,78 @@ async def run_repl(initial_models: dict[str, str]) -> None:
         deliberation.add_user_message(line)
 
         try:
-            await consult_with_live_status(deliberation, models, console)
+            await run_full_deliberation(deliberation, models, console)
         except KeyboardInterrupt:
             console.print("\n[yellow]deliberation interrupted[/yellow]")
+
+
+async def run_full_deliberation(
+    deliberation: Deliberation, models: dict[str, str], console: Console
+) -> None:
+    """Drive the two-round deliberation with live status displays for each round."""
+    initial_votes: dict = {}
+    rebuttals: dict = {}
+
+    # ROUND 1: independent votes, live status panel updates as each lands.
+    vote_statuses = {name: f"voting  [{models[name]}]" for name in PERSONAS}
+    with Live(vote_status_panel(vote_statuses, initial_votes), console=console, refresh_per_second=8) as live:
+        async for name, result in _vote_round(deliberation, models):
+            initial_votes[name] = result
+            if isinstance(result, Exception):
+                vote_statuses[name] = f"failed: {type(result).__name__}"
+            else:
+                vote_statuses[name] = f"{result.verdict.value}  [{models[name]}]"
+            live.update(vote_status_panel(vote_statuses, initial_votes))
+
+    console.print()
+    render_initial_votes(initial_votes, console)
+    console.print()
+
+    valid_voters = {n: v for n, v in initial_votes.items() if isinstance(v, PersonaResponse)}
+    if len(valid_voters) < 2:
+        # Not enough for debate — commit what we have and synthesize.
+        for name, response in valid_voters.items():
+            deliberation.commit_response(name, response)
+        render_synthesis(synthesize(initial_votes), console)
+        return
+
+    # ROUND 2
+    debate_statuses = {name: f"debating  [{models[name]}]" for name in valid_voters}
+    with Live(debate_status_panel(debate_statuses, rebuttals), console=console, refresh_per_second=8) as live:
+        async for name, payload in _debate_round(deliberation, models, valid_voters):
+            rebuttals[name] = payload
+            if isinstance(payload, Exception):
+                debate_statuses[name] = f"failed: {type(payload).__name__}"
+            elif isinstance(payload, Rebuttal):
+                arrow = "→" if payload.final_verdict == valid_voters[name].verdict else "⇒"
+                debate_statuses[name] = f"{arrow} {payload.final_verdict.value}  [{models[name]}]"
+            live.update(debate_status_panel(debate_statuses, rebuttals))
+
+    console.print()
+    render_debate(initial_votes, rebuttals, console)
+
+    # Commit FINAL responses (post-debate) to history.
+    final_responses: dict[str, PersonaResponse] = {}
+    for name in valid_voters:
+        rebuttal = rebuttals.get(name)
+        initial = valid_voters[name]
+        if isinstance(rebuttal, Rebuttal):
+            final = PersonaResponse(
+                verdict=rebuttal.final_verdict,
+                reasoning=initial.reasoning,
+                asks_in_return=initial.asks_in_return,
+            )
+            final_responses[name] = final
+            deliberation.commit_response(name, final)
+        else:
+            final_responses[name] = initial
+            deliberation.commit_response(name, initial)
+
+    render_synthesis(synthesize(final_responses), console)
 
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
     console = Console()
     deliberation = Deliberation()
     deliberation.add_user_message(question)
-    await consult_with_live_status(deliberation, models, console)
+    await run_full_deliberation(deliberation, models, console)

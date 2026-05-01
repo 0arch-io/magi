@@ -2,7 +2,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from magi.core import PersonaResponse, Verdict
+from magi.core import PersonaResponse, Rebuttal, Verdict
 
 
 VERDICT_COLOR = {
@@ -27,7 +27,7 @@ BANNER = """[bold red]
 
 HELP_TEXT = """[bold]commands[/bold]
   [cyan]/help[/cyan]                  show this help
-  [cyan]/new[/cyan]                   start a fresh deliberation (clears prior thread)
+  [cyan]/new[/cyan]                   start a fresh deliberation
   [cyan]/models[/cyan]                show current model assignments
   [cyan]/melchior[/cyan] <model>      assign a different model to Melchior
   [cyan]/balthasar[/cyan] <model>     assign a different model to Balthasar
@@ -41,6 +41,10 @@ HELP_TEXT = """[bold]commands[/bold]
   [red]❯❯[/red]  argue back — they reconsider; verdicts can change if you
        bring genuinely new info or expose a flaw. Just pressing harder
        does not work. Type [cyan]/new[/cyan] for a fresh question.
+
+[bold]rounds[/bold]
+  1. each member votes independently from their own lens
+  2. they see each other's votes and argue back; final verdicts may shift
 
 [bold]verdicts[/bold]
   [green]ACCEPT[/green]       yes, do it
@@ -67,7 +71,7 @@ def print_models(console: Console, models: dict[str, str]) -> None:
     console.print(Panel(text, title="[bold]model assignments[/bold]", border_style="dim"))
 
 
-def status_panel(statuses: dict[str, str], results: dict) -> Panel:
+def vote_status_panel(statuses: dict[str, str], results: dict) -> Panel:
     text = Text()
     for name in statuses:
         result = results.get(name)
@@ -85,7 +89,28 @@ def status_panel(statuses: dict[str, str], results: dict) -> Panel:
         text.append(f"{name:<10}  ", style=f"bold {color}")
         text.append(f"{statuses[name]}\n", style="dim")
 
-    return Panel(text, title="[bold cyan]MAGI DELIBERATING[/bold cyan]", border_style="cyan")
+    return Panel(text, title="[bold cyan]ROUND 1 — INITIAL VOTES[/bold cyan]", border_style="cyan")
+
+
+def debate_status_panel(statuses: dict[str, str], rebuttals: dict) -> Panel:
+    text = Text()
+    for name in statuses:
+        result = rebuttals.get(name)
+        if result is None:
+            mark = "·"
+            color = "magenta"
+        elif isinstance(result, Exception):
+            mark = "✗"
+            color = "red"
+        else:
+            mark = "✓"
+            color = VERDICT_COLOR[result.final_verdict]
+
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"{statuses[name]}\n", style="dim")
+
+    return Panel(text, title="[bold magenta]ROUND 2 — COUNCIL DELIBERATES[/bold magenta]", border_style="magenta")
 
 
 def _persona_panel(name: str, result: PersonaResponse | Exception) -> Panel:
@@ -103,10 +128,46 @@ def _persona_panel(name: str, result: PersonaResponse | Exception) -> Panel:
     return Panel(body, title=f"[bold {color}]{name}[/bold {color}]", border_style=color)
 
 
-def render_results(responses: dict, synthesis: str, console: Console | None = None) -> None:
-    console = console or Console()
-    for name, result in responses.items():
+def _debate_panel(
+    name: str,
+    initial: PersonaResponse | Exception,
+    rebuttal: Rebuttal | Exception | None,
+) -> Panel:
+    if isinstance(rebuttal, Exception):
+        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
+
+    if rebuttal is None or not isinstance(initial, PersonaResponse):
+        body = Text("(no debate — initial vote stands)", style="dim")
+        return Panel(body, title=f"[bold]{name}[/bold]", border_style="dim")
+
+    color = VERDICT_COLOR[rebuttal.final_verdict]
+    body = Text()
+    body.append(rebuttal.response + "\n\n")
+
+    body.append("FINAL: ", style="bold")
+    body.append(rebuttal.final_verdict.value, style=f"bold {color}")
+    if rebuttal.final_verdict != initial.verdict:
+        body.append(f"   (changed from {initial.verdict.value})", style="bold yellow")
+    else:
+        body.append("   (held)", style="dim")
+
+    return Panel(body, title=f"[bold {color}]{name} → others[/bold {color}]", border_style=color)
+
+
+def render_initial_votes(votes: dict, console: Console) -> None:
+    for name, result in votes.items():
         console.print(_persona_panel(name, result))
+
+
+def render_debate(
+    initial_votes: dict, rebuttals: dict, console: Console
+) -> None:
+    for name in initial_votes:
+        console.print(_debate_panel(name, initial_votes[name], rebuttals.get(name)))
+
+
+def render_synthesis(synthesis: str, console: Console) -> None:
     console.print()
     console.print(Panel(synthesis, title="[bold cyan]RESULT[/bold cyan]", border_style="cyan"))
 
