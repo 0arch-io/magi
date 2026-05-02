@@ -84,6 +84,36 @@ class Rebuttal(BaseModel):
         return self
 
 
+# ── Choice mode (v0.11) ─────────────────────────────────────────────────────
+# For "A or B?" questions. Each persona picks one of the named options
+# instead of voting ACCEPT/REJECT/CONDITIONAL. Synthesis tallies per option.
+
+class ChoiceResponse(BaseModel):
+    chosen_option: str = Field(
+        ...,
+        min_length=1,
+        description="The option you pick. Must EXACTLY match one of the options provided in the question (case-insensitive). Pick exactly one — no 'depends', no combining, no 'both'.",
+    )
+    reasoning: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 sharp DECLARATIVE sentences for why you picked this option over the others. State your read from your lens. Never address the user with questions. Never end a sentence with '?'.",
+    )
+
+
+class ChoiceRebuttal(BaseModel):
+    response: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 DECLARATIVE sentences responding to the others by name. Push back if their pick is wrong, hold your line. Never address the user with questions.",
+    )
+    final_choice: str = Field(
+        ...,
+        min_length=1,
+        description="Your final pick this round. Same option as before OR changed only if a real argument moved you.",
+    )
+
+
 class Deliberation:
     """Tracks per-member message history across multiple turns. Members are
     typically the 3 core MAGI plus any specialists invited via /invite."""
@@ -332,6 +362,252 @@ async def iterative_deliberate(
     for name, response in current_positions.items():
         deliberation.commit_response(name, response)
     yield ("done", "deadlock", current_positions)
+
+
+def _normalize_option(value: str, options: list[str]) -> str:
+    """Match a free-text choice against the canonical option list (case-insensitive,
+    substring-tolerant). Returns the canonical option if matched; raw value if not."""
+    if not value:
+        return value
+    low = value.strip().lower()
+    for opt in options:
+        if low == opt.lower():
+            return opt
+    for opt in options:
+        if low in opt.lower() or opt.lower() in low:
+            return opt
+    return value.strip()
+
+
+async def _consult_choice(
+    client: httpx.AsyncClient,
+    model: str,
+    system: str,
+    messages: list[dict],
+    options: list[str],
+) -> ChoiceResponse:
+    """Round-1 choice vote. The system prompt is augmented with the option list."""
+    options_block = (
+        "\n\n== THIS IS A CHOICE QUESTION ==\n"
+        f"Pick exactly ONE of these options: {', '.join(options)}.\n"
+        "Set chosen_option to the EXACT option name (one of those above). "
+        "Do not invent new options, do not combine them, do not say 'depends'. "
+        "If you genuinely can't pick from your lens, pick the one that fits your lens BEST and explain why in reasoning."
+    )
+    schema = ChoiceResponse.model_json_schema()
+    response = await client.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "system", "content": system + options_block}] + messages,
+            "format": schema,
+            "stream": False,
+            "options": {"temperature": 0.7},
+        },
+        timeout=90.0,
+    )
+    response.raise_for_status()
+    content = response.json()["message"]["content"]
+    parsed = ChoiceResponse.model_validate_json(_strip_thinking(content))
+    parsed.chosen_option = _normalize_option(parsed.chosen_option, options)
+    return parsed
+
+
+async def _rebut_choice(
+    client: httpx.AsyncClient,
+    model: str,
+    system: str,
+    messages: list[dict],
+    own_position: ChoiceResponse,
+    others: dict[str, ChoiceResponse],
+    options: list[str],
+    round_num: int,
+) -> ChoiceRebuttal:
+    others_text = "\n\n".join(
+        f"{name} picked {r.chosen_option} — {r.reasoning}"
+        for name, r in others.items()
+    )
+
+    identity_anchor = (
+        "REMEMBER: you are speaking ABOUT the user's situation. "
+        "Use 'they' / 'the user' / 'their'. Never 'I' / 'my' / 'we'. "
+        "The choice belongs to the user, not you."
+    )
+
+    options_reminder = (
+        f"You must pick from these options: {', '.join(options)}. "
+        "final_choice must EXACTLY match one of them."
+    )
+
+    if round_num == 2:
+        opener = "The other council members have just picked. Here is what they said:"
+        closer = (
+            "Address them by name. Push back if their pick is wrong from your lens. "
+            "1-3 sentences. Then give your final_choice for this round. HOLD YOUR LINE "
+            "unless a real argument exposed new information or a flaw. Convergence for its "
+            "own sake is failure."
+        )
+    else:
+        opener = (
+            f"This is round {round_num} of the deliberation. The other members' "
+            "latest picks:"
+        )
+        closer = (
+            "Respond to the latest points. HOLD YOUR LINE unless a real argument "
+            "exposed new information or a flaw. 1-3 sentences. Final pick: same as "
+            "last round OR updated only if you were genuinely persuaded."
+        )
+
+    debate_prompt = f"{identity_anchor}\n\n{options_reminder}\n\n{opener}\n\n{others_text}\n\n{closer}"
+
+    schema = ChoiceRebuttal.model_json_schema()
+    debate_messages = (
+        messages
+        + [{"role": "assistant", "content": own_position.model_dump_json()}]
+        + [{"role": "user", "content": debate_prompt}]
+    )
+    response = await client.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "system", "content": system}] + debate_messages,
+            "format": schema,
+            "stream": False,
+            "options": {"temperature": 0.7},
+        },
+        timeout=90.0,
+    )
+    response.raise_for_status()
+    content = response.json()["message"]["content"]
+    parsed = ChoiceRebuttal.model_validate_json(_strip_thinking(content))
+    parsed.final_choice = _normalize_option(parsed.final_choice, options)
+    return parsed
+
+
+async def _vote_choice_round(
+    deliberation: Deliberation, models: dict[str, str], options: list[str]
+) -> AsyncIterator[tuple[str, ChoiceResponse | Exception]]:
+    async with httpx.AsyncClient() as client:
+        async def wrap(name: str):
+            try:
+                return name, await _consult_choice(client, models[name], get_system_prompt(name), deliberation.histories[name], options)
+            except Exception as e:
+                return name, e
+        tasks = [asyncio.create_task(wrap(n)) for n in models.keys()]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+
+async def _debate_choice_round(
+    deliberation: Deliberation,
+    models: dict[str, str],
+    current_positions: dict[str, ChoiceResponse],
+    options: list[str],
+    round_num: int,
+) -> AsyncIterator[tuple[str, ChoiceRebuttal | Exception]]:
+    async with httpx.AsyncClient() as client:
+        async def rebut(name: str):
+            own = current_positions[name]
+            others = {n: v for n, v in current_positions.items() if n != name}
+            try:
+                return name, await _rebut_choice(client, models[name], get_system_prompt(name), deliberation.histories[name], own, others, options, round_num)
+            except Exception as e:
+                return name, e
+        tasks = [asyncio.create_task(rebut(n)) for n in current_positions.keys()]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+
+def _is_choice_consensus(positions: dict[str, ChoiceResponse]) -> bool:
+    choices = [p.chosen_option for p in positions.values()]
+    return len(choices) >= 2 and len(set(choices)) == 1
+
+
+async def iterative_choose(
+    deliberation: Deliberation,
+    models: dict[str, str],
+    options: list[str],
+    max_rounds: int = MAX_DELIBERATION_ROUNDS,
+) -> AsyncIterator[tuple]:
+    """Choice-mode deliberation. Each member picks one of `options`. Same event
+    shape as iterative_deliberate so the renderer can reuse panels:
+      ("round_start", round_num)
+      ("vote", name, ChoiceResponse | Exception)
+      ("rebuttal", name, ChoiceRebuttal | Exception)
+      ("done", outcome, current_positions)
+    """
+    yield ("round_start", 1)
+    initial: dict[str, ChoiceResponse | Exception] = {}
+    async for name, result in _vote_choice_round(deliberation, models, options):
+        initial[name] = result
+        yield ("vote", name, result)
+
+    valid: dict[str, ChoiceResponse] = {n: v for n, v in initial.items() if isinstance(v, ChoiceResponse)}
+    if len(valid) < 2:
+        yield ("done", "incomplete", valid)
+        return
+
+    current = dict(valid)
+    if _is_choice_consensus(current):
+        yield ("done", "consensus", current)
+        return
+
+    for round_num in range(2, max_rounds + 1):
+        yield ("round_start", round_num)
+        async for name, rebuttal in _debate_choice_round(deliberation, models, current, options, round_num):
+            yield ("rebuttal", name, rebuttal)
+            if isinstance(rebuttal, ChoiceRebuttal):
+                prev = current[name]
+                current[name] = ChoiceResponse(
+                    chosen_option=rebuttal.final_choice,
+                    reasoning=prev.reasoning,
+                )
+        if _is_choice_consensus(current):
+            yield ("done", "consensus", current)
+            return
+
+    yield ("done", "split", current)
+
+
+def synthesize_choice(
+    responses: dict[str, ChoiceResponse | Exception],
+    outcome: str,
+    options: list[str],
+) -> str:
+    """Tally choice votes. Returns 'CONSENSUS — Swift (3/3)', 'WINNER — Swift (2/3)',
+    or 'TIE — Swift, React Native (1 each)'."""
+    valid = {n: r for n, r in responses.items() if isinstance(r, ChoiceResponse)}
+    n = len(valid)
+    if n < 2:
+        return f"INCOMPLETE — only {n} council member(s) responded"
+
+    tally: dict[str, int] = {opt: 0 for opt in options}
+    for r in valid.values():
+        tally[r.chosen_option] = tally.get(r.chosen_option, 0) + 1
+
+    sorted_tally = sorted(tally.items(), key=lambda kv: (-kv[1], kv[0]))
+    top_count = sorted_tally[0][1]
+    winners = [opt for opt, c in sorted_tally if c == top_count]
+    breakdown = "  ".join(f"{opt}:{c}" for opt, c in sorted_tally if c > 0)
+
+    if len(winners) == 1 and outcome == "consensus":
+        return f"CONSENSUS — {winners[0]}  ({breakdown})"
+    if len(winners) == 1:
+        return f"WINNER — {winners[0]}  ({breakdown})"
+    return f"TIE — {' & '.join(winners)}  ({breakdown})  →  your call"
+
+
+# ── original synthesis (decision/prediction mode) ──────────────────────────
 
 
 def synthesize(

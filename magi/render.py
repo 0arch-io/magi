@@ -2,7 +2,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from magi.core import PersonaResponse, Rebuttal, Verdict
+from magi.core import ChoiceRebuttal, ChoiceResponse, PersonaResponse, Rebuttal, Verdict
 
 
 VERDICT_COLOR = {
@@ -10,6 +10,8 @@ VERDICT_COLOR = {
     Verdict.REJECT: "red",
     Verdict.CONDITIONAL: "yellow",
 }
+
+CHOICE_COLOR = "cyan"
 
 
 BANNER = """[bold red]
@@ -182,6 +184,113 @@ def render_synthesis(synthesis: str, outcome: str, console: Console) -> None:
     color = "green" if outcome == "consensus" else "yellow" if outcome == "deadlock" else "red"
     console.print()
     console.print(Panel(synthesis, title=f"[bold {color}]RESULT[/bold {color}]", border_style=color))
+
+
+# ── choice-mode rendering (v0.11) ──────────────────────────────────────────
+
+
+def choice_vote_status_panel(statuses: dict[str, str], results: dict) -> Panel:
+    text = Text()
+    for name in statuses:
+        result = results.get(name)
+        if result is None:
+            mark, color = "·", "cyan"
+        elif isinstance(result, Exception):
+            mark, color = "✗", "red"
+        else:
+            mark, color = "✓", CHOICE_COLOR
+
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"{statuses[name]}\n", style="dim")
+
+    return Panel(text, title="[bold cyan]ROUND 1 — INITIAL PICKS[/bold cyan]", border_style="cyan")
+
+
+def choice_debate_status_panel(statuses: dict[str, str], rebuttals: dict, round_num: int) -> Panel:
+    text = Text()
+    for name in statuses:
+        result = rebuttals.get(name)
+        if result is None:
+            mark, color = "·", "magenta"
+        elif isinstance(result, Exception):
+            mark, color = "✗", "red"
+        else:
+            mark, color = "✓", CHOICE_COLOR
+
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"{statuses[name]}\n", style="dim")
+
+    title = f"[bold magenta]ROUND {round_num} — COUNCIL DELIBERATES[/bold magenta]"
+    return Panel(text, title=title, border_style="magenta")
+
+
+def _choice_panel(name: str, result: ChoiceResponse | Exception) -> Panel:
+    if isinstance(result, Exception):
+        body = Text(f"FAILED: {type(result).__name__}: {result}", style="red")
+        return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
+
+    body = Text()
+    body.append("PICKS: ", style=f"bold {CHOICE_COLOR}")
+    body.append(f"{result.chosen_option}\n\n", style=f"bold {CHOICE_COLOR}")
+    body.append(result.reasoning)
+
+    return Panel(body, title=f"[bold {CHOICE_COLOR}]{name}[/bold {CHOICE_COLOR}]", border_style=CHOICE_COLOR)
+
+
+def _choice_debate_panel(
+    name: str,
+    previous_choice: str | None,
+    rebuttal: ChoiceRebuttal | Exception | None,
+    round_num: int,
+) -> Panel:
+    if isinstance(rebuttal, Exception):
+        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
+
+    if rebuttal is None:
+        body = Text("(no debate this round)", style="dim")
+        return Panel(body, title=f"[bold]{name}[/bold]", border_style="dim")
+
+    body = Text()
+    body.append(rebuttal.response + "\n\n")
+    body.append("PICKS: ", style="bold")
+    body.append(rebuttal.final_choice, style=f"bold {CHOICE_COLOR}")
+    if previous_choice is not None and rebuttal.final_choice != previous_choice:
+        body.append(f"   (changed from {previous_choice})", style="bold yellow")
+    elif previous_choice is not None:
+        body.append("   (held)", style="dim")
+
+    return Panel(
+        body,
+        title=f"[bold {CHOICE_COLOR}]{name} — round {round_num}[/bold {CHOICE_COLOR}]",
+        border_style=CHOICE_COLOR,
+    )
+
+
+def render_initial_choices(choices: dict, console: Console) -> None:
+    for name, result in choices.items():
+        console.print(_choice_panel(name, result))
+
+
+def render_choice_debate_round(
+    round_num: int,
+    rebuttals: dict,
+    previous_choices: dict[str, str],
+    console: Console,
+) -> None:
+    for name, rebuttal in rebuttals.items():
+        prev = previous_choices.get(name)
+        console.print(_choice_debate_panel(name, prev, rebuttal, round_num))
+
+
+def render_intake(question_class: str, options: list[str], console: Console) -> None:
+    """Tiny dim-line above the deliberation showing the classifier's read."""
+    if question_class == "choice" and options:
+        console.print(f"[dim italic]intake: choice question — {' vs '.join(options)}[/dim italic]")
+    else:
+        console.print(f"[dim italic]intake: {question_class} question[/dim italic]")
 
 
 def print_help(console: Console) -> None:

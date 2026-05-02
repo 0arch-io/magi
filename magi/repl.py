@@ -8,13 +8,18 @@ from rich.text import Text
 from magi import journal
 from magi.core import (
     DEFAULT_MODELS,
+    ChoiceRebuttal,
+    ChoiceResponse,
     Deliberation,
     PersonaResponse,
     Rebuttal,
     Verdict,
+    iterative_choose,
     iterative_deliberate,
     synthesize,
+    synthesize_choice,
 )
+from magi.intake import QuestionClass, classify_safe
 from magi.personas import (
     PERSONAS,
     SPECIALIST_DEFAULT_MODELS,
@@ -23,12 +28,17 @@ from magi.personas import (
     is_core_member,
 )
 from magi.render import (
+    choice_debate_status_panel,
+    choice_vote_status_panel,
     debate_status_panel,
     print_banner,
     print_help,
     print_models,
+    render_choice_debate_round,
     render_debate_round,
+    render_initial_choices,
     render_initial_votes,
+    render_intake,
     render_journal,
     render_synthesis,
     vote_status_panel,
@@ -210,7 +220,27 @@ async def run_repl(initial_models: dict[str, str]) -> None:
 async def run_full_deliberation(
     deliberation: Deliberation, models: dict[str, str], console: Console
 ) -> None:
-    """Drive iterative deliberation, rendering each round's status + panels live."""
+    """Classify the user's latest question, then route to the right deliberation
+    flow. choice → option-tally mode; everything else → ACCEPT/REJECT/CONDITIONAL."""
+    sample_history = next(iter(deliberation.histories.values()), [])
+    user_msgs = [m["content"] for m in sample_history if m["role"] == "user"]
+    if not user_msgs:
+        return
+    question = user_msgs[-1]
+
+    classification = await classify_safe(question)
+    render_intake(classification.question_class.value, classification.options, console)
+
+    if classification.question_class == QuestionClass.CHOICE and len(classification.options) >= 2:
+        await _run_choice_flow(question, classification.options, deliberation, models, console)
+    else:
+        await _run_decision_flow(question, deliberation, models, console)
+
+
+async def _run_decision_flow(
+    question: str, deliberation: Deliberation, models: dict[str, str], console: Console
+) -> None:
+    """Drive ACCEPT/REJECT/CONDITIONAL deliberation, rendering each round live."""
     initial_votes: dict = {}
     round_rebuttals: dict[int, dict] = {}
     previous_verdicts: dict[str, Verdict] = {}
@@ -313,29 +343,158 @@ async def run_full_deliberation(
     synthesis_text = synthesize(final_positions, outcome=final_outcome)
     render_synthesis(synthesis_text, final_outcome, console)
 
-    # Save this turn to the journal so it can be revisited.
-    sample_history = next(iter(deliberation.histories.values()), [])
-    user_msgs = [m["content"] for m in sample_history if m["role"] == "user"]
-    if user_msgs and final_positions:
-        last_user_msg = user_msgs[-1]
-        rounds_count = max(round_rebuttals.keys()) if round_rebuttals else 1
-        final_verdicts = {
-            name: r.verdict.value
-            for name, r in final_positions.items()
-            if isinstance(r, PersonaResponse)
-        }
-        try:
-            entry_id = journal.save_entry(
-                question=last_user_msg,
-                members=list(final_positions.keys()),
-                rounds=rounds_count,
-                outcome=final_outcome,
-                synthesis=synthesis_text,
-                final_verdicts=final_verdicts,
-            )
-            console.print(f"[dim]logged as {entry_id}  ·  /journal to review[/dim]")
-        except Exception as e:
-            console.print(f"[dim red]journal write failed: {e}[/dim red]")
+    rounds_count = max(round_rebuttals.keys()) if round_rebuttals else 1
+    final_verdicts = {
+        name: r.verdict.value
+        for name, r in final_positions.items()
+        if isinstance(r, PersonaResponse)
+    }
+    _save_journal(question, list(final_positions.keys()), rounds_count, final_outcome, synthesis_text, final_verdicts, console)
+
+
+async def _run_choice_flow(
+    question: str,
+    options: list[str],
+    deliberation: Deliberation,
+    models: dict[str, str],
+    console: Console,
+) -> None:
+    """Drive choice deliberation. Same shape as decision flow but with
+    ChoiceResponse / ChoiceRebuttal types and option-tally synthesis."""
+    initial_votes: dict = {}
+    round_rebuttals: dict[int, dict] = {}
+    previous_choices: dict[str, str] = {}
+    final_outcome = "incomplete"
+    final_positions: dict = {}
+
+    vote_statuses = {name: f"picking  [{models[name]}]" for name in models}
+    live: Live | None = Live(choice_vote_status_panel(vote_statuses, initial_votes), console=console, refresh_per_second=8)
+    live.__enter__()
+
+    debate_statuses: dict[str, str] = {}
+    debate_round_num = 0
+    in_round_one = True
+
+    try:
+        async for event in iterative_choose(deliberation, models, options):
+            kind = event[0]
+
+            if kind == "round_start":
+                round_num = event[1]
+                if round_num == 1:
+                    continue
+
+                if live is not None:
+                    live.__exit__(None, None, None)
+                    live = None
+
+                if in_round_one:
+                    console.print()
+                    render_initial_choices(initial_votes, console)
+                    console.print()
+                    for name, response in initial_votes.items():
+                        if isinstance(response, ChoiceResponse):
+                            previous_choices[name] = response.chosen_option
+                    in_round_one = False
+                else:
+                    console.print()
+                    render_choice_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_choices, console)
+                    console.print()
+                    for name, rebuttal in round_rebuttals[debate_round_num].items():
+                        if isinstance(rebuttal, ChoiceRebuttal):
+                            previous_choices[name] = rebuttal.final_choice
+
+                debate_round_num = round_num
+                round_rebuttals[round_num] = {}
+                debate_statuses = {
+                    name: f"debating  [{models[name]}]"
+                    for name in initial_votes
+                    if isinstance(initial_votes[name], ChoiceResponse)
+                }
+                live = Live(
+                    choice_debate_status_panel(debate_statuses, round_rebuttals[round_num], round_num),
+                    console=console,
+                    refresh_per_second=8,
+                )
+                live.__enter__()
+
+            elif kind == "vote":
+                _, name, payload = event
+                initial_votes[name] = payload
+                if isinstance(payload, Exception):
+                    vote_statuses[name] = f"failed: {type(payload).__name__}"
+                else:
+                    vote_statuses[name] = f"{payload.chosen_option}  [{models[name]}]"
+                if live is not None:
+                    live.update(choice_vote_status_panel(vote_statuses, initial_votes))
+
+            elif kind == "rebuttal":
+                _, name, payload = event
+                round_rebuttals[debate_round_num][name] = payload
+                if isinstance(payload, Exception):
+                    debate_statuses[name] = f"failed: {type(payload).__name__}"
+                elif isinstance(payload, ChoiceRebuttal):
+                    prev = previous_choices.get(name)
+                    if prev is None:
+                        initial = initial_votes.get(name)
+                        if isinstance(initial, ChoiceResponse):
+                            prev = initial.chosen_option
+                    arrow = "→" if prev == payload.final_choice else "⇒"
+                    debate_statuses[name] = f"{arrow} {payload.final_choice}  [{models[name]}]"
+                if live is not None:
+                    live.update(choice_debate_status_panel(debate_statuses, round_rebuttals[debate_round_num], debate_round_num))
+
+            elif kind == "done":
+                _, outcome, positions = event
+                final_outcome = outcome
+                final_positions = positions
+    finally:
+        if live is not None:
+            live.__exit__(None, None, None)
+            live = None
+
+    if in_round_one:
+        console.print()
+        render_initial_choices(initial_votes, console)
+    else:
+        console.print()
+        render_choice_debate_round(debate_round_num, round_rebuttals[debate_round_num], previous_choices, console)
+
+    synthesis_text = synthesize_choice(final_positions, final_outcome, options)
+    render_synthesis(synthesis_text, final_outcome, console)
+
+    rounds_count = max(round_rebuttals.keys()) if round_rebuttals else 1
+    final_choices = {
+        name: r.chosen_option
+        for name, r in final_positions.items()
+        if isinstance(r, ChoiceResponse)
+    }
+    _save_journal(question, list(final_positions.keys()), rounds_count, final_outcome, synthesis_text, final_choices, console)
+
+
+def _save_journal(
+    question: str,
+    members: list[str],
+    rounds: int,
+    outcome: str,
+    synthesis: str,
+    final_verdicts: dict[str, str],
+    console: Console,
+) -> None:
+    if not final_verdicts:
+        return
+    try:
+        entry_id = journal.save_entry(
+            question=question,
+            members=members,
+            rounds=rounds,
+            outcome=outcome,
+            synthesis=synthesis,
+            final_verdicts=final_verdicts,
+        )
+        console.print(f"[dim]logged as {entry_id}  ·  /journal to review[/dim]")
+    except Exception as e:
+        console.print(f"[dim red]journal write failed: {e}[/dim red]")
 
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
