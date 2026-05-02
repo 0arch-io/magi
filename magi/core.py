@@ -16,7 +16,7 @@ MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late ro
 
 DEFAULT_MODELS = {
     "MELCHIOR": "qwen2.5:7b",       # Alibaba — 7B for reliable multi-round debate + identity rule
-    "BALTHASAR": "llama3.2:3b",     # Meta — small + fast; user can /balthasar llama3.1:8b for higher rigor
+    "BALTHASAR": "qwen3:4b",        # Qwen3 4B — promoted from llama3.2:3b in v0.10.4 (3B llama wouldn't stop interrogating the user despite explicit prompt rules; qwen3:4b follows instructions cleanly at similar footprint ~2.5GB)
     "CASPER": "mistral:latest",     # Mistral 7B — different family, reliable across multi-turn
 }
 
