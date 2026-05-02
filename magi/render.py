@@ -2,7 +2,15 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from magi.core import ChoiceRebuttal, ChoiceResponse, PersonaResponse, Rebuttal, Verdict
+from magi.core import (
+    ChoiceRebuttal,
+    ChoiceResponse,
+    PersonaResponse,
+    Rebuttal,
+    RecommendRebuttal,
+    RecommendResponse,
+    Verdict,
+)
 
 
 VERDICT_COLOR = {
@@ -12,6 +20,7 @@ VERDICT_COLOR = {
 }
 
 CHOICE_COLOR = "cyan"
+RECOMMEND_COLOR = "blue"
 
 
 BANNER = """[bold red]
@@ -291,6 +300,105 @@ def render_intake(question_class: str, options: list[str], console: Console) -> 
         console.print(f"[dim italic]intake: choice question — {' vs '.join(options)}[/dim italic]")
     else:
         console.print(f"[dim italic]intake: {question_class} question[/dim italic]")
+
+
+# ── recommend-mode rendering (v0.11 phase C) ───────────────────────────────
+
+
+def recommend_vote_status_panel(statuses: dict[str, str], results: dict) -> Panel:
+    text = Text()
+    for name in statuses:
+        result = results.get(name)
+        if result is None:
+            mark, color = "·", RECOMMEND_COLOR
+        elif isinstance(result, Exception):
+            mark, color = "✗", "red"
+        else:
+            mark, color = "✓", RECOMMEND_COLOR
+
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"{statuses[name]}\n", style="dim")
+
+    return Panel(text, title=f"[bold {RECOMMEND_COLOR}]ROUND 1 — INITIAL RECOMMENDATIONS[/bold {RECOMMEND_COLOR}]", border_style=RECOMMEND_COLOR)
+
+
+def recommend_debate_status_panel(statuses: dict[str, str], rebuttals: dict, round_num: int) -> Panel:
+    text = Text()
+    for name in statuses:
+        result = rebuttals.get(name)
+        if result is None:
+            mark, color = "·", "magenta"
+        elif isinstance(result, Exception):
+            mark, color = "✗", "red"
+        else:
+            mark, color = "✓", RECOMMEND_COLOR
+
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"{statuses[name]}\n", style="dim")
+
+    title = f"[bold magenta]ROUND {round_num} — COUNCIL REFINES[/bold magenta]"
+    return Panel(text, title=title, border_style="magenta")
+
+
+def _recommend_panel(name: str, result: RecommendResponse | Exception) -> Panel:
+    if isinstance(result, Exception):
+        body = Text(f"FAILED: {type(result).__name__}: {result}", style="red")
+        return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
+
+    body = Text()
+    body.append("RECOMMENDS: ", style=f"bold {RECOMMEND_COLOR}")
+    body.append(f"{result.recommendation}\n\n", style=f"bold {RECOMMEND_COLOR}")
+    body.append(result.reasoning)
+
+    return Panel(body, title=f"[bold {RECOMMEND_COLOR}]{name}[/bold {RECOMMEND_COLOR}]", border_style=RECOMMEND_COLOR)
+
+
+def _recommend_debate_panel(
+    name: str,
+    previous_rec: str | None,
+    rebuttal: RecommendRebuttal | Exception | None,
+    round_num: int,
+) -> Panel:
+    if isinstance(rebuttal, Exception):
+        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
+
+    if rebuttal is None:
+        body = Text("(no debate this round)", style="dim")
+        return Panel(body, title=f"[bold]{name}[/bold]", border_style="dim")
+
+    body = Text()
+    body.append(rebuttal.response + "\n\n")
+    body.append("RECOMMENDS: ", style="bold")
+    body.append(rebuttal.final_recommendation, style=f"bold {RECOMMEND_COLOR}")
+    if previous_rec is not None and rebuttal.final_recommendation.lower().strip() != previous_rec.lower().strip():
+        body.append(f"\n   (refined from: {previous_rec})", style="bold yellow")
+    elif previous_rec is not None:
+        body.append("   (held)", style="dim")
+
+    return Panel(
+        body,
+        title=f"[bold {RECOMMEND_COLOR}]{name} — round {round_num}[/bold {RECOMMEND_COLOR}]",
+        border_style=RECOMMEND_COLOR,
+    )
+
+
+def render_initial_recommendations(recs: dict, console: Console) -> None:
+    for name, result in recs.items():
+        console.print(_recommend_panel(name, result))
+
+
+def render_recommend_debate_round(
+    round_num: int,
+    rebuttals: dict,
+    previous_recs: dict[str, str],
+    console: Console,
+) -> None:
+    for name, rebuttal in rebuttals.items():
+        prev = previous_recs.get(name)
+        console.print(_recommend_debate_panel(name, prev, rebuttal, round_num))
 
 
 def print_help(console: Console) -> None:

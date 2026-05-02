@@ -7,7 +7,13 @@ from typing import AsyncIterator
 import httpx
 from pydantic import BaseModel, Field, model_validator
 
-from magi.personas import PERSONAS, get_system_prompt
+from magi.personas import (
+    PERSONAS,
+    get_choice_prompt,
+    get_decision_prompt,
+    get_recommend_prompt,
+    get_system_prompt,
+)
 
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -114,6 +120,74 @@ class ChoiceRebuttal(BaseModel):
     )
 
 
+# ── Recommend mode (v0.11 phase C) ──────────────────────────────────────────
+# For open-ended questions like "what should I build?" — each persona returns
+# ONE concrete recommendation from their lens, no verdict aggregation. The
+# output is N distinct picks; the user chooses which lens speaks to them.
+
+_BANNED_RECOMMENDATION_PHRASES = (
+    "something you're passionate about", "something you are passionate about",
+    "what aligns with your values", "aligns with your values",
+    "a project that excites you", "what excites you most",
+    "follow your heart", "follow your passion",
+    "what feels right", "what resonates with you",
+    "find your purpose", "discover your purpose",
+    "anything that interests you", "whatever you want",
+    "trust your gut",
+)
+
+
+def _recommendation_is_vague(rec: str) -> bool:
+    if len(rec.strip()) < 10:
+        return True
+    low = rec.lower()
+    return any(phrase in low for phrase in _BANNED_RECOMMENDATION_PHRASES)
+
+
+class RecommendResponse(BaseModel):
+    recommendation: str = Field(
+        ...,
+        min_length=10,
+        description=(
+            "ONE concrete, specific recommendation that the user could act on tomorrow. "
+            "A real noun-phrase, not a feeling. "
+            "FORBIDDEN: vague platitudes like 'something you're passionate about', 'what aligns with your values', "
+            "'a project that excites you', 'follow your heart', 'what feels right'. "
+            "If you cannot name a concrete thing tied to specifics in this user's question, you are hedging."
+        ),
+    )
+    reasoning: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 sharp DECLARATIVE sentences for why YOUR LENS picks this. Never end a sentence with '?'. Never interview the user.",
+    )
+
+    @model_validator(mode="after")
+    def _reject_vague(self):
+        if _recommendation_is_vague(self.recommendation):
+            raise ValueError(f"recommendation is too vague: {self.recommendation!r}")
+        return self
+
+
+class RecommendRebuttal(BaseModel):
+    response: str = Field(
+        ...,
+        min_length=20,
+        description="1-3 DECLARATIVE sentences responding to the others by name. Hold your line unless a real argument moved you.",
+    )
+    final_recommendation: str = Field(
+        ...,
+        min_length=10,
+        description="Your final concrete recommendation this round. Same as before OR refined/changed only if persuaded. Same vagueness rules.",
+    )
+
+    @model_validator(mode="after")
+    def _reject_vague(self):
+        if _recommendation_is_vague(self.final_recommendation):
+            raise ValueError(f"final_recommendation is too vague: {self.final_recommendation!r}")
+        return self
+
+
 class Deliberation:
     """Tracks per-member message history across multiple turns. Members are
     typically the 3 core MAGI plus any specialists invited via /invite."""
@@ -153,10 +227,41 @@ class Deliberation:
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+_NAME_PREFIX = re.compile(
+    r"^(MELCHIOR|BALTHASAR|CASPER|BANKER|THERAPIST|LAWYER|COACH|DOCTOR)(?:'s|s')?"
+    r"(?:\s+(?:final\s+|my\s+)?(?:recommendation|recommends|pick|picks|verdict|votes|vote|choice|chooses|chose|says|said|decides|decided|answers|answer))?"
+    r"\s*[:\-—]\s*",
+    re.IGNORECASE,
+)
+_VERDICT_PREFIX = re.compile(r"^(ACCEPT|REJECT|CONDITIONAL)\s*[-—:]\s*", re.IGNORECASE)
 
 
 def _strip_thinking(text: str) -> str:
     return _THINK_BLOCK.sub("", text).strip()
+
+
+def _strip_persona_prefixes(text: str) -> str:
+    """Remove leading 'CASPER:', 'MELCHIOR final recommendation:', 'ACCEPT -' style
+    prefixes that small models add when they confuse modes."""
+    s = text.strip()
+    for _ in range(3):
+        before = s
+        s = _NAME_PREFIX.sub("", s).strip()
+        s = _VERDICT_PREFIX.sub("", s).strip()
+        if s == before:
+            break
+    return s
+
+
+# Standard Ollama options applied to every call. think=False disables qwen3's
+# chain-of-thought leak that otherwise floods the response field with internal
+# reasoning ("Okay, so I need to think about this...").
+def _ollama_options(temperature: float = 0.7, num_predict: int = 800) -> dict:
+    return {
+        "temperature": temperature,
+        "num_predict": num_predict,
+        "think": False,
+    }
 
 
 async def _consult(
@@ -173,7 +278,7 @@ async def _consult(
             "messages": [{"role": "system", "content": system}] + messages,
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
     )
@@ -245,7 +350,7 @@ async def _rebut(
             "messages": [{"role": "system", "content": system}] + debate_messages,
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
     )
@@ -260,7 +365,7 @@ async def _vote_round(
     async with httpx.AsyncClient() as client:
         async def wrap(name: str):
             try:
-                return name, await _consult(client, models[name], get_system_prompt(name), deliberation.histories[name])
+                return name, await _consult(client, models[name], get_decision_prompt(name), deliberation.histories[name])
             except Exception as e:
                 return name, e
 
@@ -285,7 +390,7 @@ async def _debate_round(
             own = current_positions[name]
             others = {n: v for n, v in current_positions.items() if n != name}
             try:
-                return name, await _rebut(client, models[name], get_system_prompt(name), deliberation.histories[name], own, others, round_num)
+                return name, await _rebut(client, models[name], get_decision_prompt(name), deliberation.histories[name], own, others, round_num)
             except Exception as e:
                 return name, e
 
@@ -386,14 +491,9 @@ async def _consult_choice(
     messages: list[dict],
     options: list[str],
 ) -> ChoiceResponse:
-    """Round-1 choice vote. The system prompt is augmented with the option list."""
-    options_block = (
-        "\n\n== THIS IS A CHOICE QUESTION ==\n"
-        f"Pick exactly ONE of these options: {', '.join(options)}.\n"
-        "Set chosen_option to the EXACT option name (one of those above). "
-        "Do not invent new options, do not combine them, do not say 'depends'. "
-        "If you genuinely can't pick from your lens, pick the one that fits your lens BEST and explain why in reasoning."
-    )
+    """Round-1 choice vote. The system prompt already has CHOICE_BLOCK; we just
+    inject the actual options for this question."""
+    options_block = f"\n\n== OPTIONS FOR THIS QUESTION ==\nPick ONE of: {', '.join(options)}.\nchosen_option must EXACTLY match one of those names."
     schema = ChoiceResponse.model_json_schema()
     response = await client.post(
         f"{OLLAMA_HOST}/api/chat",
@@ -402,7 +502,7 @@ async def _consult_choice(
             "messages": [{"role": "system", "content": system + options_block}] + messages,
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
     )
@@ -473,7 +573,7 @@ async def _rebut_choice(
             "messages": [{"role": "system", "content": system}] + debate_messages,
             "format": schema,
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
     )
@@ -490,7 +590,7 @@ async def _vote_choice_round(
     async with httpx.AsyncClient() as client:
         async def wrap(name: str):
             try:
-                return name, await _consult_choice(client, models[name], get_system_prompt(name), deliberation.histories[name], options)
+                return name, await _consult_choice(client, models[name], get_choice_prompt(name), deliberation.histories[name], options)
             except Exception as e:
                 return name, e
         tasks = [asyncio.create_task(wrap(n)) for n in models.keys()]
@@ -515,7 +615,7 @@ async def _debate_choice_round(
             own = current_positions[name]
             others = {n: v for n, v in current_positions.items() if n != name}
             try:
-                return name, await _rebut_choice(client, models[name], get_system_prompt(name), deliberation.histories[name], own, others, options, round_num)
+                return name, await _rebut_choice(client, models[name], get_choice_prompt(name), deliberation.histories[name], own, others, options, round_num)
             except Exception as e:
                 return name, e
         tasks = [asyncio.create_task(rebut(n)) for n in current_positions.keys()]
@@ -577,6 +677,176 @@ async def iterative_choose(
             return
 
     yield ("done", "split", current)
+
+
+async def _consult_recommend(
+    client: httpx.AsyncClient,
+    model: str,
+    system: str,
+    messages: list[dict],
+) -> RecommendResponse:
+    """System prompt already contains RECOMMEND_BLOCK with full instructions."""
+    schema = RecommendResponse.model_json_schema()
+    response = await client.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "system", "content": system}] + messages,
+            "format": schema,
+            "stream": False,
+            "options": _ollama_options(temperature=0.8, num_predict=800),
+        },
+        timeout=90.0,
+    )
+    response.raise_for_status()
+    content = response.json()["message"]["content"]
+    parsed = RecommendResponse.model_validate_json(_strip_thinking(content))
+    parsed.recommendation = _strip_persona_prefixes(parsed.recommendation)
+    return parsed
+
+
+async def _rebut_recommend(
+    client: httpx.AsyncClient,
+    model: str,
+    system: str,
+    messages: list[dict],
+    own_position: RecommendResponse,
+    others: dict[str, RecommendResponse],
+    round_num: int,
+) -> RecommendRebuttal:
+    others_text = "\n\n".join(
+        f"{name} recommends: {r.recommendation} — {r.reasoning}"
+        for name, r in others.items()
+    )
+
+    identity_anchor = (
+        "REMEMBER: you are speaking ABOUT the user's situation. "
+        "Use 'they' / 'the user' / 'their'. Never 'I' / 'my' / 'we'."
+    )
+
+    closer = (
+        "Address the others by name if you push back. Stay in your lens — your job is NOT to converge "
+        "on a single answer; three different concrete recommendations is a valid result. Hold your "
+        "recommendation unless a real argument exposed a flaw OR sparked a sharper version. 1-3 sentences. "
+        "Then give your final_recommendation: same as before, refined, or replaced. Must remain concrete — "
+        "no platitudes."
+    )
+
+    if round_num == 2:
+        opener = "The other council members have just given their recommendations:"
+    else:
+        opener = f"This is round {round_num} of the deliberation. Latest recommendations:"
+
+    debate_prompt = f"{identity_anchor}\n\n{opener}\n\n{others_text}\n\n{closer}"
+
+    schema = RecommendRebuttal.model_json_schema()
+    debate_messages = (
+        messages
+        + [{"role": "assistant", "content": own_position.model_dump_json()}]
+        + [{"role": "user", "content": debate_prompt}]
+    )
+    response = await client.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "system", "content": system}] + debate_messages,
+            "format": schema,
+            "stream": False,
+            "options": _ollama_options(temperature=0.8, num_predict=800),
+        },
+        timeout=90.0,
+    )
+    response.raise_for_status()
+    content = response.json()["message"]["content"]
+    parsed = RecommendRebuttal.model_validate_json(_strip_thinking(content))
+    parsed.final_recommendation = _strip_persona_prefixes(parsed.final_recommendation)
+    parsed.response = _strip_persona_prefixes(parsed.response)
+    return parsed
+
+
+async def _vote_recommend_round(
+    deliberation: Deliberation, models: dict[str, str]
+) -> AsyncIterator[tuple[str, RecommendResponse | Exception]]:
+    async with httpx.AsyncClient() as client:
+        async def wrap(name: str):
+            try:
+                return name, await _consult_recommend(client, models[name], get_recommend_prompt(name), deliberation.histories[name])
+            except Exception as e:
+                return name, e
+        tasks = [asyncio.create_task(wrap(n)) for n in models.keys()]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+
+async def _debate_recommend_round(
+    deliberation: Deliberation,
+    models: dict[str, str],
+    current_positions: dict[str, RecommendResponse],
+    round_num: int,
+) -> AsyncIterator[tuple[str, RecommendRebuttal | Exception]]:
+    async with httpx.AsyncClient() as client:
+        async def rebut(name: str):
+            own = current_positions[name]
+            others = {n: v for n, v in current_positions.items() if n != name}
+            try:
+                return name, await _rebut_recommend(client, models[name], get_recommend_prompt(name), deliberation.histories[name], own, others, round_num)
+            except Exception as e:
+                return name, e
+        tasks = [asyncio.create_task(rebut(n)) for n in current_positions.keys()]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+
+async def iterative_recommend(
+    deliberation: Deliberation,
+    models: dict[str, str],
+) -> AsyncIterator[tuple]:
+    """Open-mode deliberation. Each persona returns ONE concrete recommendation
+    in a SINGLE round — no rebuttal, no convergence pressure. Multi-round
+    drift was destroying the lens-distinctness that's the whole point of
+    recommend mode (MELCHIOR going from 'habit tracker' to 'tech workshop'
+    after seeing CASPER's pick is not refinement, it's contamination).
+    Three independent picks from three distinct lenses IS the value."""
+    yield ("round_start", 1)
+    initial: dict[str, RecommendResponse | Exception] = {}
+    async for name, result in _vote_recommend_round(deliberation, models):
+        initial[name] = result
+        yield ("vote", name, result)
+
+    valid: dict[str, RecommendResponse] = {n: v for n, v in initial.items() if isinstance(v, RecommendResponse)}
+    outcome = "picks" if len(valid) >= 2 else "incomplete"
+    yield ("done", outcome, valid)
+
+
+def synthesize_recommend(responses: dict[str, RecommendResponse | Exception]) -> str:
+    """Recommend mode never 'wins' — output is N concrete picks. Show overlap if any."""
+    valid = [(n, r) for n, r in responses.items() if isinstance(r, RecommendResponse)]
+    n = len(valid)
+    if n < 2:
+        return f"INCOMPLETE — only {n} council member(s) responded"
+
+    rec_to_names: dict[str, list[str]] = {}
+    for name, r in valid:
+        rec_to_names.setdefault(r.recommendation.lower().strip(), []).append(name)
+
+    if len(rec_to_names) == 1:
+        return f"CONSENSUS — all {n} picked the same direction  →  your call to commit"
+    if len(rec_to_names) < n:
+        overlaps = [(rec, names) for rec, names in rec_to_names.items() if len(names) > 1]
+        if overlaps:
+            rec, names = overlaps[0]
+            return f"PARTIAL OVERLAP — {len(names)}/{n} agree on one pick  →  your call between {n - len(names) + 1} options"
+    return f"{n} DISTINCT PICKS — your call: pick the lens that speaks to you"
 
 
 def synthesize_choice(
