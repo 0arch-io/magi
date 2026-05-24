@@ -50,7 +50,21 @@ from magi.render import (
     render_recommend_debate_round,
     render_synthesis,
     vote_status_panel,
+    warmup_status_panel,
 )
+from magi.warmup import warmup_models
+
+
+async def warm_council(models: dict[str, str], console: Console) -> None:
+    """Pre-load council models into Ollama before the first deliberation so
+    cold-load doesn't time out the first question. Non-fatal — a failed warm
+    just shows in red; user can still try, deliberation has its own timeout."""
+    statuses: dict[str, tuple[str, str]] = {n: (m, "loading") for n, m in models.items()}
+    with Live(warmup_status_panel(statuses), console=console, refresh_per_second=4) as live:
+        async for name, model, err in warmup_models(models):
+            statuses[name] = (model, "ready" if err is None else f"failed: {type(err).__name__}")
+            live.update(warmup_status_panel(statuses))
+    console.print()
 
 
 def _print_council_roster(console: Console, models: dict[str, str]) -> None:
@@ -195,6 +209,7 @@ async def run_repl(initial_models: dict[str, str]) -> None:
     console.clear()
     print_banner(console, initial_models)
     models = dict(initial_models)
+    await warm_council(models, console)
     deliberation: Deliberation | None = None
 
     while True:
@@ -626,6 +641,7 @@ def _save_journal(
 
 async def run_oneshot(question: str, models: dict[str, str]) -> None:
     console = Console()
+    await warm_council(models, console)
     deliberation = Deliberation(list(models.keys()))
     deliberation.add_user_message(question)
     await run_full_deliberation(deliberation, models, console)

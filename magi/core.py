@@ -18,6 +18,7 @@ from magi.personas import (
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
+KEEP_ALIVE = "30m"  # how long Ollama holds models resident between calls; pairs with startup warmup
 
 
 DEFAULT_MODELS = {
@@ -278,6 +279,7 @@ async def _consult(
             "messages": [{"role": "system", "content": system}] + messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
@@ -350,6 +352,7 @@ async def _rebut(
             "messages": [{"role": "system", "content": system}] + debate_messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
@@ -502,6 +505,7 @@ async def _consult_choice(
             "messages": [{"role": "system", "content": system + options_block}] + messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
@@ -573,6 +577,7 @@ async def _rebut_choice(
             "messages": [{"role": "system", "content": system}] + debate_messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.7),
         },
         timeout=90.0,
@@ -694,6 +699,7 @@ async def _consult_recommend(
             "messages": [{"role": "system", "content": system}] + messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.8, num_predict=800),
         },
         timeout=90.0,
@@ -752,6 +758,7 @@ async def _rebut_recommend(
             "messages": [{"role": "system", "content": system}] + debate_messages,
             "format": schema,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "options": _ollama_options(temperature=0.8, num_predict=800),
         },
         timeout=90.0,

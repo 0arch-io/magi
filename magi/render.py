@@ -405,6 +405,23 @@ def print_help(console: Console) -> None:
     console.print(Panel(HELP_TEXT, border_style="dim"))
 
 
+def warmup_status_panel(statuses: dict[str, tuple[str, str]]) -> Panel:
+    """statuses[name] = (model_id, state). state ∈ {'loading', 'ready', 'failed: ...'}."""
+    text = Text()
+    for name, (model, state) in statuses.items():
+        if state == "ready":
+            mark, color = "✓", "green"
+        elif state == "loading":
+            mark, color = "·", "yellow"
+        else:
+            mark, color = "✗", "red"
+        text.append(f"  {mark}  ", style=f"bold {color}")
+        text.append(f"{name:<10}  ", style=f"bold {color}")
+        text.append(f"[{model}]  ", style="dim")
+        text.append(f"{state}\n", style="dim")
+    return Panel(text, title="[bold cyan]WARMING COUNCIL[/bold cyan]", border_style="cyan")
+
+
 def render_journal(entries: list[dict], console: Console) -> None:
     if not entries:
         console.print("[dim]journal is empty — your deliberations will be logged here[/dim]")
