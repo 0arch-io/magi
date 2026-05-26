@@ -18,6 +18,23 @@ def _ensure_dir() -> None:
         os.chmod(JOURNAL_DIR, 0o700)
 
 
+def cleanup_stale_temps() -> int:
+    """Remove .tmp files older than 60s left by interrupted writes. Returns count removed."""
+    import time
+    removed = 0
+    if not JOURNAL_DIR.exists():
+        return 0
+    cutoff = time.time() - 60
+    for f in JOURNAL_DIR.glob("*.tmp"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _safe_path(path: Path) -> Path:
     """Reject symlinks and paths outside the config dir."""
     if path.is_symlink():

@@ -221,6 +221,7 @@ SPECIALISTS_LOWER = {n.lower() for n in SPECIALISTS}
 async def run_repl(initial_models: dict[str, str]) -> None:
     console = Console()
     console.clear()
+    journal.cleanup_stale_temps()
     print_banner(console, initial_models)
     models = dict(initial_models)
     try:
