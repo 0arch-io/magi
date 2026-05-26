@@ -24,6 +24,7 @@ from magi.core import (
     synthesize_recommend,
 )
 from magi.intake import QuestionClass, classify_safe
+from magi.memory import build_context, detect_patterns, search
 from magi.personas import (
     PERSONAS,
     SPECIALIST_DEFAULT_MODELS,
@@ -47,6 +48,8 @@ from magi.render import (
     render_initial_votes,
     render_intake,
     render_journal,
+    render_memory_hits,
+    render_patterns,
     render_recommend_debate_round,
     render_stats,
     render_synthesis,
@@ -287,12 +290,25 @@ async def run_full_deliberation(
 
     render_intake(classification.question_class.value, classification.options, console)
 
+    hits = search(question)
+    if hits:
+        render_memory_hits(hits, console)
+        context = build_context(hits)
+        if context:
+            augmented = context + "\n" + question
+            for hist in deliberation.histories.values():
+                if hist and hist[-1]["role"] == "user":
+                    hist[-1]["content"] = augmented
+
     if classification.question_class == QuestionClass.CHOICE and len(classification.options) >= 2:
         await _run_choice_flow(question, classification.options, deliberation, models, console)
     elif classification.question_class == QuestionClass.OPEN:
         await _run_recommend_flow(question, deliberation, models, console)
     else:
         await _run_decision_flow(question, deliberation, models, console)
+
+    patterns = detect_patterns(question)
+    render_patterns(patterns, console)
 
 
 async def _run_decision_flow(

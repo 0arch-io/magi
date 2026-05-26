@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from rich.box import HEAVY, ROUNDED, SIMPLE
 from rich.console import Console
 from rich.panel import Panel
@@ -543,3 +545,41 @@ def render_stats(entries: list[dict], console: Console) -> None:
             text2.append(f"  {ts}  ", style="dim")
             text2.append(f"{e.get('question', '')[:80]}\n", style="italic")
         console.print(Panel(text2, title="[bold #c4a35a]recent deadlocks[/bold #c4a35a]", border_style="#c4a35a", box=ROUNDED))
+
+
+def render_memory_hits(hits: list, console: Console) -> None:
+    if not hits:
+        return
+    text = Text()
+    for h in hits:
+        text.append("  ● ", style=f"dim {ACCENT}")
+        text.append(f"{h.timestamp}  ", style="dim")
+        text.append(f'"{h.question[:70]}"', style="italic")
+        text.append(f"  → {h.outcome}\n", style="dim")
+        if h.user_outcome:
+            text.append(f"    ↳ you said: \"{h.user_outcome}\"\n", style=f"{ACCENT}")
+    console.print(Panel(text, title=f"[bold {ACCENT}]you've asked this before[/bold {ACCENT}]", border_style="dim", box=ROUNDED))
+
+
+def render_patterns(patterns, console: Console) -> None:
+    lines: list[str] = []
+    if patterns.repeat_question:
+        lines.append("you've circled back to this one")
+    if patterns.deadlock_streak >= 3:
+        lines.append(f"the council has deadlocked {patterns.deadlock_streak} times in a row")
+    if patterns.top_followed_member:
+        color = _mc(patterns.top_followed_member)
+        icon = _mi(patterns.top_followed_member)
+        lines.append(f"you tend to follow [{color}]{icon} {patterns.top_followed_member}[/{color}] ({patterns.top_followed_count} times)")
+    if patterns.outcomes_recorded > 0 and patterns.total_deliberations > 5:
+        rate = patterns.outcomes_recorded * 100 // patterns.total_deliberations
+        if rate < 30:
+            lines.append(f"only {rate}% of your decisions have recorded outcomes, /outcome helps the council learn")
+    if not lines:
+        return
+    text = Text()
+    for line in lines:
+        text.append("  ▸ ", style=f"dim {ACCENT}")
+    console.print()
+    for line in lines:
+        console.print(f"  [{ACCENT}]▸[/{ACCENT}] [dim]{line}[/dim]")
