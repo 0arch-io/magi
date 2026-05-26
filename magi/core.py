@@ -37,9 +37,9 @@ def _wrap_connect_error(exc: Exception) -> Exception:
 
 
 DEFAULT_MODELS = {
-    "MELCHIOR": "qwen2.5:7b",
-    "BALTHASAR": "qwen3:4b",
-    "CASPER": "mistral:latest",
+    "MELCHIOR": "qwen3:14b",
+    "BALTHASAR": "phi4:latest",
+    "CASPER": "hermes3:8b",
 }
 
 
@@ -265,7 +265,7 @@ def _strip_persona_prefixes(text: str) -> str:
 
 
 # think=False prevents qwen3 from leaking chain-of-thought into the response
-def _ollama_options(temperature: float = 0.7, num_predict: int = 800) -> dict:
+def _ollama_options(temperature: float = 0.7, num_predict: int = 1200) -> dict:
     return {
         "temperature": temperature,
         "num_predict": num_predict,

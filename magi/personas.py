@@ -103,11 +103,11 @@ SPECIALIST_DESCRIPTIONS = {
 
 
 SPECIALIST_DEFAULT_MODELS = {
-    "BANKER": "qwen2.5:7b",
-    "THERAPIST": "mistral:latest",
-    "LAWYER": "qwen2.5:7b",
-    "COACH": "llama3.1:8b",
-    "DOCTOR": "qwen2.5:7b",
+    "BANKER": "qwen3:14b",
+    "THERAPIST": "hermes3:8b",
+    "LAWYER": "qwen3:14b",
+    "COACH": "phi4:latest",
+    "DOCTOR": "qwen3:14b",
 }
 
 

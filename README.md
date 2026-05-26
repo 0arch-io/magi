@@ -24,9 +24,9 @@ Named for the Nerv supercomputer in *Neon Genesis Evangelion*: three perspective
 
 You bring a question. Three models, each running a distinct lens, debate it across multiple rounds and return a verdict:
 
-- **MELCHIOR** (`qwen2.5:7b`) — data, logic, second-order effects. Watches for confirmation bias, sunk cost, planning fallacy.
-- **BALTHASAR** (`qwen3:4b`) — long-term wellbeing, relationships, what gets sacrificed quietly. Asks who gets hurt if it fails, what's irreversible.
-- **CASPER** (`mistral:latest`) — desire, values, identity. Sees through performance, asks what you'd regret NOT doing.
+- **MELCHIOR** (`qwen3:14b`) — data, logic, second-order effects. Watches for confirmation bias, sunk cost, planning fallacy.
+- **BALTHASAR** (`phi4:latest`) — long-term wellbeing, relationships, what gets sacrificed quietly. Asks who gets hurt if it fails, what's irreversible.
+- **CASPER** (`hermes3:8b`) — desire, values, identity. Sees through performance, asks what you'd regret NOT doing.
 
 The council always decides. CONDITIONAL verdicts require a concrete blocker: vague hedges are coerced to ACCEPT. If the three disagree, you get DEADLOCK and the call goes back to you, but with three distinct readings to argue with.
 
@@ -39,12 +39,12 @@ pipx install git+https://github.com/0arch-io/magi
 Requires [Ollama](https://ollama.com) running locally with the default models pulled:
 
 ```bash
-ollama pull qwen2.5:7b
-ollama pull qwen3:4b
-ollama pull mistral
+ollama pull qwen3:14b
+ollama pull phi4
+ollama pull hermes3:8b
 ```
 
-Total footprint: ~11GB.
+Total footprint: ~23GB.
 
 Verify your setup:
 
