@@ -1,5 +1,3 @@
-"""Tests for journal save/load/search."""
-
 from unittest.mock import patch
 
 from magi.journal import find_entry, load_entries, save_entry, set_user_outcome

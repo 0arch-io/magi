@@ -1,4 +1,4 @@
-"""Persistent config at ~/.config/magi/config.toml. CLI flags always win."""
+"""Config loading and merging."""
 
 import os
 import sys
@@ -14,7 +14,6 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 
 def _validated_ollama_host() -> str:
-    """Read OLLAMA_HOST from env, validate scheme, warn on non-localhost."""
     raw = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
     parsed = urlparse(raw)
     if parsed.scheme not in ("http", "https"):

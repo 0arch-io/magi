@@ -57,10 +57,7 @@ from magi.warmup import warmup_models
 
 
 async def warm_council(models: dict[str, str], console: Console) -> None:
-    """Pre-load council models into Ollama before the first deliberation so
-    cold-load doesn't time out the first question. Non-fatal — a failed warm
-    just shows in red; user can still try, deliberation has its own timeout.
-    Raises OllamaUnavailable if Ollama itself can't be reached."""
+    """Pre-load models. Raises OllamaUnavailable if Ollama is unreachable."""
     import httpx
     statuses: dict[str, tuple[str, str]] = {n: (m, "loading") for n, m in models.items()}
     all_connect_failed = True

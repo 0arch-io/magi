@@ -1,5 +1,3 @@
-"""Tests for synthesis functions that produce the final verdict lines."""
-
 from magi.core import (
     ChoiceResponse,
     PersonaResponse,

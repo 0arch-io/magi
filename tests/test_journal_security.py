@@ -1,5 +1,3 @@
-"""Tests for journal security: symlink detection, permissions, atomic writes."""
-
 import os
 from unittest.mock import patch
 

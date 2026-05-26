@@ -1,5 +1,4 @@
-"""Append-only log of every deliberation. Useful for spotting patterns in
-your indecision over time, and for revisiting the council's verdicts."""
+"""Append-only deliberation journal."""
 
 import json
 import os
@@ -20,8 +19,7 @@ def _ensure_dir() -> None:
 
 
 def _safe_path(path: Path) -> Path:
-    """Resolve the path and verify it hasn't been symlinked outside the config dir.
-    Also verifies the path is not a symlink (prevents symlink-following attacks)."""
+    """Reject symlinks and paths outside the config dir."""
     if path.is_symlink():
         raise OSError(f"refusing to follow symlink at {path}")
     resolved = path.resolve()
@@ -31,7 +29,6 @@ def _safe_path(path: Path) -> Path:
 
 
 def _verify_file_permissions(path: Path) -> None:
-    """Verify file permissions aren't world-readable. Fix if they are."""
     if not path.exists():
         return
     actual_mode = path.stat().st_mode & 0o777
@@ -101,8 +98,7 @@ def find_entry(id_prefix: str) -> dict | None:
 
 
 def set_user_outcome(id_prefix: str, outcome_text: str) -> bool:
-    """Mark what the user actually did/didn't do. Uses atomic file replacement.
-    Returns True if matched, False otherwise."""
+    """Set user outcome on a journal entry. Returns True if matched."""
     if not JOURNAL_PATH.exists():
         return False
     safe = _safe_path(JOURNAL_PATH)

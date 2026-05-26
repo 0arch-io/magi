@@ -1,16 +1,4 @@
-"""Question-class intake classifier. Runs once before deliberation to route
-the council into the right verdict shape:
-
-    decision    — yes/no question with one decision (default flow)
-    choice      — pick between named options
-    open        — open-ended request for direction
-    prediction  — will X happen / what will happen (interpreted as bet)
-    noise       — greeting / test / gibberish; no question to deliberate
-
-Default classifier model is qwen3:4b (already loaded as BALTHASAR's default —
-zero extra memory cost). Falls back to `decision` on any classification
-failure so we degrade to the original v0.10.x behavior, not crash.
-"""
+"""Intake classifier. Routes questions to the right deliberation mode."""
 
 import os
 from enum import Enum
@@ -93,7 +81,7 @@ async def classify(question: str) -> Classification:
                 ],
                 "format": schema,
                 "stream": False,
-                "options": {"temperature": 0.1},  # deterministic-ish — this is a classification, not a creative call
+                "options": {"temperature": 0.1},
             },
             timeout=30.0,
         )
@@ -103,8 +91,7 @@ async def classify(question: str) -> Classification:
 
 
 async def classify_safe(question: str) -> Classification:
-    """Like classify() but never raises. Falls back to DECISION (the original
-    behavior) on any error so the deliberation still works if Ollama hiccups."""
+    """classify() but never raises. Falls back to DECISION on error."""
     try:
         return await classify(question)
     except Exception:

@@ -1,5 +1,3 @@
-"""Tests for config file loading and merging."""
-
 from pathlib import Path
 from unittest.mock import patch
 

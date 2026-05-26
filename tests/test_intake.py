@@ -1,5 +1,3 @@
-"""Tests for the intake classifier's models and parsing (not the LLM call)."""
-
 from magi.intake import Classification, QuestionClass
 
 

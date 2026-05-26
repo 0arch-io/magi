@@ -1,5 +1,3 @@
-"""Tests for Pydantic validators that enforce the council's decisiveness rules."""
-
 import pytest
 from pydantic import ValidationError
 

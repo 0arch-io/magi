@@ -203,7 +203,6 @@ def render_synthesis(synthesis: str, outcome: str, console: Console) -> None:
     console.print(Panel(synthesis, title=f"[bold {color}]RESULT[/bold {color}]", border_style=color))
 
 
-# ── choice-mode rendering (v0.11) ──────────────────────────────────────────
 
 
 def choice_vote_status_panel(statuses: dict[str, str], results: dict) -> Panel:
@@ -303,14 +302,12 @@ def render_choice_debate_round(
 
 
 def render_intake(question_class: str, options: list[str], console: Console) -> None:
-    """Tiny dim-line above the deliberation showing the classifier's read."""
     if question_class == "choice" and options:
         console.print(f"[dim italic]intake: choice question — {' vs '.join(options)}[/dim italic]")
     else:
         console.print(f"[dim italic]intake: {question_class} question[/dim italic]")
 
 
-# ── recommend-mode rendering (v0.11 phase C) ───────────────────────────────
 
 
 def recommend_vote_status_panel(statuses: dict[str, str], results: dict) -> Panel:

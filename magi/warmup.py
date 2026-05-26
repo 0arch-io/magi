@@ -13,10 +13,7 @@ WARMUP_TIMEOUT = 180.0
 async def warmup_models(
     models: dict[str, str],
 ) -> AsyncIterator[tuple[str, str, Exception | None]]:
-    """Pre-load each model into Ollama memory in parallel.
-
-    Sends an empty-prompt /api/generate with keep_alive — Ollama treats this as
-    a load-without-generate, the fastest way to make a model resident.
+    """Pre-load models into Ollama memory in parallel.
     Yields (name, model_id, error_or_None) as each finishes."""
     async with httpx.AsyncClient(timeout=WARMUP_TIMEOUT) as client:
         async def warm_one(name: str, model: str):

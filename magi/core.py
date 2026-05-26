@@ -13,14 +13,14 @@ from magi.personas import (
     get_recommend_prompt,
 )
 
-MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
-KEEP_ALIVE = "30m"  # how long Ollama holds models resident between calls; pairs with startup warmup
-MAX_RESPONSE_BYTES = 1_048_576  # 1MB cap on Ollama response bodies
-MAX_INPUT_CHARS = 10_000  # cap user input to prevent OOM on giant prompts
+MAX_DELIBERATION_ROUNDS = 3
+KEEP_ALIVE = "30m"
+MAX_RESPONSE_BYTES = 1_048_576
+MAX_INPUT_CHARS = 10_000
 
 
 class OllamaUnavailable(Exception):
-    """Raised when Ollama can't be reached. Carries a user-friendly message."""
+    """Raised when Ollama can't be reached."""
     def __init__(self, host: str = OLLAMA_HOST):
         super().__init__(
             f"cannot connect to Ollama at {host}\n\n"
@@ -31,16 +31,15 @@ class OllamaUnavailable(Exception):
 
 
 def _wrap_connect_error(exc: Exception) -> Exception:
-    """Convert httpx.ConnectError to a friendly OllamaUnavailable."""
     if isinstance(exc, httpx.ConnectError):
         return OllamaUnavailable()
     return exc
 
 
 DEFAULT_MODELS = {
-    "MELCHIOR": "qwen2.5:7b",       # Alibaba — 7B for reliable multi-round debate + identity rule
-    "BALTHASAR": "qwen3:4b",        # Qwen3 4B — promoted from llama3.2:3b in v0.10.4 (3B llama wouldn't stop interrogating the user despite explicit prompt rules; qwen3:4b follows instructions cleanly at similar footprint ~2.5GB)
-    "CASPER": "mistral:latest",     # Mistral 7B — different family, reliable across multi-turn
+    "MELCHIOR": "qwen2.5:7b",
+    "BALTHASAR": "qwen3:4b",
+    "CASPER": "mistral:latest",
 }
 
 
@@ -90,7 +89,6 @@ class PersonaResponse(BaseModel):
 
 
 class Rebuttal(BaseModel):
-    """What a council member says to the others after seeing their current positions."""
     response: str = Field(
         ...,
         min_length=20,
@@ -109,10 +107,6 @@ class Rebuttal(BaseModel):
             self.condition = ""
         return self
 
-
-# ── Choice mode (v0.11) ─────────────────────────────────────────────────────
-# For "A or B?" questions. Each persona picks one of the named options
-# instead of voting ACCEPT/REJECT/CONDITIONAL. Synthesis tallies per option.
 
 class ChoiceResponse(BaseModel):
     chosen_option: str = Field(
@@ -139,11 +133,6 @@ class ChoiceRebuttal(BaseModel):
         description="Your final pick this round. Same option as before OR changed only if a real argument moved you.",
     )
 
-
-# ── Recommend mode (v0.11 phase C) ──────────────────────────────────────────
-# For open-ended questions like "what should I build?" — each persona returns
-# ONE concrete recommendation from their lens, no verdict aggregation. The
-# output is N distinct picks; the user chooses which lens speaks to them.
 
 _BANNED_RECOMMENDATION_PHRASES = (
     "something you're passionate about", "something you are passionate about",
@@ -215,8 +204,7 @@ class RecommendRebuttal(BaseModel):
 
 
 class Deliberation:
-    """Tracks per-member message history across multiple turns. Members are
-    typically the 3 core MAGI plus any specialists invited via /invite."""
+    """Per-member message history across deliberation turns."""
 
     def __init__(self, member_names: list[str]) -> None:
         self.histories: dict[str, list[dict]] = {name: [] for name in member_names}
@@ -231,9 +219,6 @@ class Deliberation:
         self.histories[name].append({"role": "assistant", "content": response.model_dump_json()})
 
     def add_member(self, name: str) -> None:
-        """Add a new member mid-deliberation. They get backfilled with the prior
-        USER messages so they have the same context, but no fabricated assistant
-        responses (since they did not say anything yet)."""
         if name in self.histories:
             return
         if self.histories:
@@ -269,9 +254,6 @@ def _strip_thinking(text: str) -> str:
 
 
 def _strip_persona_prefixes(text: str) -> str:
-    """Remove leading 'CASPER:', 'MELCHIOR final recommendation:', 'ACCEPT -' style
-    prefixes that small models add when they confuse modes. Also strips any residual
-    control characters that survived the initial sanitize pass."""
     s = _sanitize_llm_output(text.strip())
     for _ in range(3):
         before = s
@@ -282,9 +264,7 @@ def _strip_persona_prefixes(text: str) -> str:
     return s
 
 
-# Standard Ollama options applied to every call. think=False disables qwen3's
-# chain-of-thought leak that otherwise floods the response field with internal
-# reasoning ("Okay, so I need to think about this...").
+# think=False prevents qwen3 from leaking chain-of-thought into the response
 def _ollama_options(temperature: float = 0.7, num_predict: int = 800) -> dict:
     return {
         "temperature": temperature,
@@ -302,7 +282,6 @@ def _check_response_size(response: httpx.Response) -> None:
 
 
 def _check_content_type(response: httpx.Response) -> None:
-    """Reject non-JSON responses to prevent content-type confusion attacks."""
     ct = response.headers.get("content-type", "")
     if ct and "json" not in ct and "text" not in ct:
         raise ValueError(f"unexpected content-type from Ollama: {ct[:60]}")
@@ -313,15 +292,12 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def _sanitize_llm_output(text: str) -> str:
-    """Strip ANSI escape sequences, control characters, and null bytes from LLM output.
-    Prevents terminal injection attacks from malicious model responses."""
     text = _ANSI_ESCAPE.sub("", text)
     text = _CONTROL_CHARS.sub("", text)
     return text
 
 
 def _validate_response(response: httpx.Response) -> None:
-    """Run all response security checks."""
     _validate_response(response)
     _check_content_type(response)
 
@@ -363,7 +339,6 @@ async def _rebut(
     others: dict[str, PersonaResponse],
     round_num: int,
 ) -> Rebuttal:
-    """Show the persona the others' current positions and ask for a response + verdict."""
     others_text = "\n\n".join(
         f"{name}: {r.verdict.value} — {r.reasoning}"
         for name, r in others.items()
@@ -481,16 +456,8 @@ def _is_consensus(positions: dict[str, PersonaResponse]) -> bool:
 async def iterative_deliberate(
     deliberation: Deliberation, models: dict[str, str], max_rounds: int = MAX_DELIBERATION_ROUNDS
 ) -> AsyncIterator[tuple]:
-    """Iterative deliberation: vote round + debate rounds until consensus or max rounds.
-
-    Yields events for the UI to render:
-      ("round_start", round_num)
-      ("vote", name, PersonaResponse | Exception)             # round 1
-      ("rebuttal", name, Rebuttal | Exception)                # rounds 2+
-      ("done", outcome, current_positions)  # outcome ∈ {"consensus","deadlock","incomplete"}
-
-    Mutates deliberation: commits the final post-deliberation responses to history.
-    """
+    """Yields ("round_start", n), ("vote", name, result), ("rebuttal", name, result),
+    ("done", outcome, positions). Outcome is "consensus", "deadlock", or "incomplete"."""
     yield ("round_start", 1)
     initial_votes: dict[str, PersonaResponse | Exception] = {}
     async for name, result in _vote_round(deliberation, models):
@@ -539,8 +506,6 @@ async def iterative_deliberate(
 
 
 def _normalize_option(value: str, options: list[str]) -> str:
-    """Match a free-text choice against the canonical option list (case-insensitive,
-    substring-tolerant). Returns the canonical option if matched; raw value if not."""
     if not value:
         return value
     low = value.strip().lower()
@@ -560,8 +525,6 @@ async def _consult_choice(
     messages: list[dict],
     options: list[str],
 ) -> ChoiceResponse:
-    """Round-1 choice vote. The system prompt already has CHOICE_BLOCK; we just
-    inject the actual options for this question."""
     options_block = f"\n\n== OPTIONS FOR THIS QUESTION ==\nPick ONE of: {', '.join(options)}.\nchosen_option must EXACTLY match one of those names."
     schema = ChoiceResponse.model_json_schema()
     response = await client.post(
@@ -712,13 +675,7 @@ async def iterative_choose(
     options: list[str],
     max_rounds: int = MAX_DELIBERATION_ROUNDS,
 ) -> AsyncIterator[tuple]:
-    """Choice-mode deliberation. Each member picks one of `options`. Same event
-    shape as iterative_deliberate so the renderer can reuse panels:
-      ("round_start", round_num)
-      ("vote", name, ChoiceResponse | Exception)
-      ("rebuttal", name, ChoiceRebuttal | Exception)
-      ("done", outcome, current_positions)
-    """
+    """Same event shape as iterative_deliberate but with ChoiceResponse/ChoiceRebuttal."""
     yield ("round_start", 1)
     initial: dict[str, ChoiceResponse | Exception] = {}
     async for name, result in _vote_choice_round(deliberation, models, options):
@@ -758,7 +715,6 @@ async def _consult_recommend(
     system: str,
     messages: list[dict],
 ) -> RecommendResponse:
-    """System prompt already contains RECOMMEND_BLOCK with full instructions."""
     schema = RecommendResponse.model_json_schema()
     response = await client.post(
         f"{OLLAMA_HOST}/api/chat",
@@ -888,12 +844,7 @@ async def iterative_recommend(
     deliberation: Deliberation,
     models: dict[str, str],
 ) -> AsyncIterator[tuple]:
-    """Open-mode deliberation. Each persona returns ONE concrete recommendation
-    in a SINGLE round — no rebuttal, no convergence pressure. Multi-round
-    drift was destroying the lens-distinctness that's the whole point of
-    recommend mode (MELCHIOR going from 'habit tracker' to 'tech workshop'
-    after seeing CASPER's pick is not refinement, it's contamination).
-    Three independent picks from three distinct lenses IS the value."""
+    """Single round, no rebuttal. Three independent picks from three lenses."""
     yield ("round_start", 1)
     initial: dict[str, RecommendResponse | Exception] = {}
     async for name, result in _vote_recommend_round(deliberation, models):
@@ -906,7 +857,6 @@ async def iterative_recommend(
 
 
 def synthesize_recommend(responses: dict[str, RecommendResponse | Exception]) -> str:
-    """Recommend mode never 'wins' — output is N concrete picks. Show overlap if any."""
     valid = [(n, r) for n, r in responses.items() if isinstance(r, RecommendResponse)]
     n = len(valid)
     if n < 2:
@@ -954,7 +904,6 @@ def synthesize_choice(
     return f"TIE — {' & '.join(winners)}  ({breakdown})  →  your call"
 
 
-# ── original synthesis (decision/prediction mode) ──────────────────────────
 
 
 def synthesize(

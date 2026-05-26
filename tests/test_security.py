@@ -1,5 +1,3 @@
-"""Tests for security hardening: terminal injection, input caps, response validation."""
-
 import pytest
 
 from magi.core import (

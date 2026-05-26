@@ -1,11 +1,3 @@
-"""Mode-aware council prompts. The base frame (identity, tone, lens) is
-shared; the verdict-shape block is mode-specific so the model isn't asked
-to apply ACCEPT/REJECT/CONDITIONAL rules in choice or recommend mode."""
-
-
-# ── shared blocks (identity, tone, lens) ────────────────────────────────────
-
-
 _IDENTITY = """== IDENTITY (CRITICAL) ==
 You are NOT the person asking. The USER is bringing the question. Their facts are about THEM — their GPA, their job, their money, their agency, their relationship, their application — that all belongs to them, not you.
 
@@ -32,7 +24,6 @@ The user may push back. Defend your position if you still believe it. Change it 
 """
 
 
-# ── mode-specific verdict/output blocks ────────────────────────────────────
 
 
 _DECISION_BLOCK = """== VERDICTS ==
@@ -69,7 +60,6 @@ This is an OPEN-ENDED question. The user wants direction, not a verdict.
 """
 
 
-# ── per-lens text ──────────────────────────────────────────────────────────
 
 
 _LENSES = {
@@ -121,7 +111,6 @@ SPECIALIST_DEFAULT_MODELS = {
 }
 
 
-# Backwards-compat constants (rarely needed externally; kept for /reset etc.)
 PERSONAS = {name: f"You are a council member.\n\n{_IDENTITY}\n\n{_DECISION_BLOCK}\n\n{_LENSES[name]}\n\n{_TONE}\n\n{_FOLLOWUP}" for name in CORE_MEMBERS}
 SPECIALISTS = {name: f"You are a council member.\n\n{_IDENTITY}\n\n{_DECISION_BLOCK}\n\n{_LENSES[name]}\n\n{_TONE}\n\n{_FOLLOWUP}" for name in SPECIALIST_NAMES}
 
@@ -151,7 +140,6 @@ def get_recommend_prompt(name: str) -> str:
     return _build_prompt(name, _RECOMMEND_BLOCK)
 
 
-# Backwards-compat shim — defaults to decision-mode prompt.
 def get_system_prompt(name: str) -> str:
     return get_decision_prompt(name)
 
