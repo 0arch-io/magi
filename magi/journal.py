@@ -14,14 +14,29 @@ JOURNAL_PATH = JOURNAL_DIR / "journal.jsonl"
 
 def _ensure_dir() -> None:
     JOURNAL_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    actual_mode = JOURNAL_DIR.stat().st_mode & 0o777
+    if actual_mode & 0o077:
+        os.chmod(JOURNAL_DIR, 0o700)
 
 
 def _safe_path(path: Path) -> Path:
-    """Resolve the path and verify it hasn't been symlinked outside the config dir."""
+    """Resolve the path and verify it hasn't been symlinked outside the config dir.
+    Also verifies the path is not a symlink (prevents symlink-following attacks)."""
+    if path.is_symlink():
+        raise OSError(f"refusing to follow symlink at {path}")
     resolved = path.resolve()
     if not str(resolved).startswith(str(JOURNAL_DIR.resolve())):
         raise OSError(f"journal path escapes config directory: {resolved}")
     return resolved
+
+
+def _verify_file_permissions(path: Path) -> None:
+    """Verify file permissions aren't world-readable. Fix if they are."""
+    if not path.exists():
+        return
+    actual_mode = path.stat().st_mode & 0o777
+    if actual_mode & 0o077:
+        os.chmod(path, 0o600)
 
 
 def save_entry(
@@ -60,6 +75,7 @@ def load_entries(limit: int | None = None) -> list[dict]:
     if not JOURNAL_PATH.exists():
         return []
     safe = _safe_path(JOURNAL_PATH)
+    _verify_file_permissions(safe)
     entries = []
     with safe.open() as f:
         for line in f:

@@ -92,8 +92,12 @@ def init_config() -> bool:
     """Write example config if it doesn't exist. Returns True if created."""
     if CONFIG_PATH.exists():
         return False
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(_EXAMPLE_CONFIG)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(CONFIG_PATH), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, _EXAMPLE_CONFIG.encode())
+    finally:
+        os.close(fd)
     return True
 
 

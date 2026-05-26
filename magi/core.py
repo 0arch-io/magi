@@ -16,6 +16,7 @@ from magi.personas import (
 MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
 KEEP_ALIVE = "30m"  # how long Ollama holds models resident between calls; pairs with startup warmup
 MAX_RESPONSE_BYTES = 1_048_576  # 1MB cap on Ollama response bodies
+MAX_INPUT_CHARS = 10_000  # cap user input to prevent OOM on giant prompts
 
 
 class OllamaUnavailable(Exception):
@@ -221,6 +222,8 @@ class Deliberation:
         self.histories: dict[str, list[dict]] = {name: [] for name in member_names}
 
     def add_user_message(self, content: str) -> None:
+        if len(content) > MAX_INPUT_CHARS:
+            content = content[:MAX_INPUT_CHARS]
         for name in self.histories:
             self.histories[name].append({"role": "user", "content": content})
 
@@ -267,8 +270,9 @@ def _strip_thinking(text: str) -> str:
 
 def _strip_persona_prefixes(text: str) -> str:
     """Remove leading 'CASPER:', 'MELCHIOR final recommendation:', 'ACCEPT -' style
-    prefixes that small models add when they confuse modes."""
-    s = text.strip()
+    prefixes that small models add when they confuse modes. Also strips any residual
+    control characters that survived the initial sanitize pass."""
+    s = _sanitize_llm_output(text.strip())
     for _ in range(3):
         before = s
         s = _NAME_PREFIX.sub("", s).strip()
@@ -297,6 +301,31 @@ def _check_response_size(response: httpx.Response) -> None:
         raise ValueError(f"Ollama response too large ({len(response.content)} bytes, cap {MAX_RESPONSE_BYTES})")
 
 
+def _check_content_type(response: httpx.Response) -> None:
+    """Reject non-JSON responses to prevent content-type confusion attacks."""
+    ct = response.headers.get("content-type", "")
+    if ct and "json" not in ct and "text" not in ct:
+        raise ValueError(f"unexpected content-type from Ollama: {ct[:60]}")
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[^[(\n]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_llm_output(text: str) -> str:
+    """Strip ANSI escape sequences, control characters, and null bytes from LLM output.
+    Prevents terminal injection attacks from malicious model responses."""
+    text = _ANSI_ESCAPE.sub("", text)
+    text = _CONTROL_CHARS.sub("", text)
+    return text
+
+
+def _validate_response(response: httpx.Response) -> None:
+    """Run all response security checks."""
+    _validate_response(response)
+    _check_content_type(response)
+
+
 async def _consult(
     client: httpx.AsyncClient,
     model: str,
@@ -320,8 +349,8 @@ async def _consult(
     except httpx.ConnectError:
         raise OllamaUnavailable()
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     return PersonaResponse.model_validate_json(_strip_thinking(content))
 
 
@@ -394,8 +423,8 @@ async def _rebut(
         timeout=90.0,
     )
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     return Rebuttal.model_validate_json(_strip_thinking(content))
 
 
@@ -548,8 +577,8 @@ async def _consult_choice(
         timeout=90.0,
     )
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = ChoiceResponse.model_validate_json(_strip_thinking(content))
     parsed.chosen_option = _normalize_option(parsed.chosen_option, options)
     return parsed
@@ -621,8 +650,8 @@ async def _rebut_choice(
         timeout=90.0,
     )
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = ChoiceRebuttal.model_validate_json(_strip_thinking(content))
     parsed.final_choice = _normalize_option(parsed.final_choice, options)
     return parsed
@@ -744,8 +773,8 @@ async def _consult_recommend(
         timeout=90.0,
     )
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = RecommendResponse.model_validate_json(_strip_thinking(content))
     parsed.recommendation = _strip_persona_prefixes(parsed.recommendation)
     return parsed
@@ -804,8 +833,8 @@ async def _rebut_recommend(
         timeout=90.0,
     )
     response.raise_for_status()
-    _check_response_size(response)
-    content = response.json()["message"]["content"]
+    _validate_response(response)
+    content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = RecommendRebuttal.model_validate_json(_strip_thinking(content))
     parsed.final_recommendation = _strip_persona_prefixes(parsed.final_recommendation)
     parsed.response = _strip_persona_prefixes(parsed.response)
