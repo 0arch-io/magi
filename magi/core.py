@@ -303,13 +303,28 @@ def _check_content_type(response: httpx.Response) -> None:
         raise ValueError(f"unexpected content-type from Ollama: {ct[:60]}")
 
 
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[^[(\n]")
+_ANSI_ESCAPE = re.compile(
+    r"\x1b\[[0-9;]*[A-Za-z]"       # CSI sequences
+    r"|\x1b\][^\x07\x1b]*\x07"     # OSC terminated by BEL
+    r"|\x1b\][^\x07\x1b]*\x1b\\"   # OSC terminated by ST
+    r"|\x1b[^[(\n]"                 # other ESC sequences
+)
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_UNICODE_HAZARDS = re.compile(
+    "["
+    "\u200b-\u200f"
+    "\u202a-\u202e"
+    "\u2060-\u2069"
+    "\ufeff"
+    "\ufff9-\ufffc"
+    "]"
+)
 
 
 def _sanitize_llm_output(text: str) -> str:
     text = _ANSI_ESCAPE.sub("", text)
     text = _CONTROL_CHARS.sub("", text)
+    text = _UNICODE_HAZARDS.sub("", text)
     return text
 
 

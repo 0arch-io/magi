@@ -357,10 +357,13 @@ def render_choice_debate_round(
 
 def render_intake(question_class: str, options: list[str], console: Console) -> None:
     if question_class == "choice" and options:
-        label = f"{' vs '.join(options)}"
+        label = " vs ".join(options)
     else:
         label = question_class
-    console.print(f"  [{ACCENT}]▸[/{ACCENT}] [dim]{label}[/dim]")
+    t = Text("  ")
+    t.append("▸ ", style=ACCENT)
+    t.append(label, style="dim")
+    console.print(t)
 
 
 # Recommend mode

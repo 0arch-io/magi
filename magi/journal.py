@@ -84,7 +84,7 @@ def load_entries(limit: int | None = None) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     entries.reverse()
-    if limit:
+    if limit and limit > 0:
         entries = entries[:limit]
     return entries
 
@@ -119,12 +119,18 @@ def set_user_outcome(id_prefix: str, outcome_text: str) -> bool:
             entries.append(entry)
     if matched:
         fd, tmp_path = tempfile.mkstemp(dir=str(JOURNAL_DIR), suffix=".tmp")
+        f = None
         try:
-            with os.fdopen(fd, "w") as f:
-                for entry in entries:
-                    f.write(json.dumps(entry) + "\n")
+            f = os.fdopen(fd, "w")
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+            f.close()
             os.replace(tmp_path, str(safe))
         except BaseException:
+            if f is not None:
+                f.close()
+            else:
+                os.close(fd)
             os.unlink(tmp_path)
             raise
     return matched

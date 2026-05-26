@@ -51,6 +51,29 @@ class TestSanitizeLLMOutput:
         assert "\x07" not in result
         assert "CONSENSUS" in result
 
+    def test_strips_osc8_hyperlink_st_terminator(self):
+        attack = "\x1b]8;;https://evil.com\x1b\\click here\x1b]8;;\x1b\\"
+        result = _sanitize_llm_output(attack)
+        assert "\x1b" not in result
+        assert "evil" not in result
+        assert "click here" in result
+
+    def test_strips_rtl_override(self):
+        result = _sanitize_llm_output("VERDICT: ‮TCEJER")
+        assert "‮" not in result
+
+    def test_strips_zero_width_chars(self):
+        result = _sanitize_llm_output("he​llo‍world﻿test")
+        assert result == "helloworld test" or result == "helloworldtest"
+        assert "​" not in result
+        assert "‍" not in result
+        assert "﻿" not in result
+
+    def test_strips_bidi_isolates(self):
+        result = _sanitize_llm_output("start⁦hidden⁩end")
+        assert "⁦" not in result
+        assert "⁩" not in result
+
 
 class TestInputLengthCap:
     def test_long_input_truncated(self):
