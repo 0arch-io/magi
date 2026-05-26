@@ -145,10 +145,14 @@ _BANNED_RECOMMENDATION_PHRASES = (
     "trust your gut",
     "consider building", "consider creating", "consider developing",
     "consider starting", "consider exploring", "consider pursuing",
+    "consider trying", "consider playing", "consider reading",
+    "consider watching", "consider learning", "consider taking",
     "look into", "explore options", "explore opportunities",
+    "explore a ", "try a ", "play a ",
     "a project that addresses", "a project that solves",
+    "a game with ", "a book with ", "a tool with ",
     "something that combines", "something that leverages",
-    "an initiative that", "a venture that",
+    "something with a ", "an initiative that", "a venture that",
 )
 
 
@@ -164,11 +168,10 @@ class RecommendResponse(BaseModel):
         ...,
         min_length=10,
         description=(
-            "ONE concrete, specific recommendation that the user could act on tomorrow. "
-            "A real noun-phrase, not a feeling. "
-            "FORBIDDEN: vague platitudes like 'something you're passionate about', 'what aligns with your values', "
-            "'a project that excites you', 'follow your heart', 'what feels right'. "
-            "If you cannot name a concrete thing tied to specifics in this user's question, you are hedging."
+            "ONE concrete, specific recommendation. NAME IT. "
+            "If the user asks for a game, name the game (e.g. 'Hades'). If they ask for a project, name the project. "
+            "A category ('a game with X') is NOT a recommendation. A specific name IS. "
+            "Do NOT start with 'Consider', 'Explore', 'Try', or 'A game with'. Just name the thing directly."
         ),
     )
     reasoning: str = Field(
@@ -262,6 +265,23 @@ def _strip_persona_prefixes(text: str) -> str:
         if s == before:
             break
     return s
+
+
+_REC_FILLER_PREFIX = re.compile(
+    r"^(?:try|play|explore|check out|look into|consider(?: trying)?)\s+",
+    re.IGNORECASE,
+)
+
+
+def _clean_recommendation(rec: str) -> str:
+    rec = _sanitize_llm_output(rec.strip())
+    rec = _strip_persona_prefixes(rec)
+    rec = _REC_FILLER_PREFIX.sub("", rec).strip()
+    if ": " in rec:
+        before_colon = rec.split(": ", 1)[0]
+        if len(before_colon) >= 3 and len(before_colon) <= 80:
+            rec = before_colon
+    return rec
 
 
 # think=False prevents qwen3 from leaking chain-of-thought into the response
@@ -732,7 +752,7 @@ async def _consult_recommend(
     _validate_response(response)
     content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = RecommendResponse.model_validate_json(_strip_thinking(content))
-    parsed.recommendation = _strip_persona_prefixes(parsed.recommendation)
+    parsed.recommendation = _clean_recommendation(parsed.recommendation)
     return parsed
 
 
@@ -792,7 +812,7 @@ async def _rebut_recommend(
     _validate_response(response)
     content = _sanitize_llm_output(response.json()["message"]["content"])
     parsed = RecommendRebuttal.model_validate_json(_strip_thinking(content))
-    parsed.final_recommendation = _strip_persona_prefixes(parsed.final_recommendation)
+    parsed.final_recommendation = _clean_recommendation(parsed.final_recommendation)
     parsed.response = _strip_persona_prefixes(parsed.response)
     return parsed
 

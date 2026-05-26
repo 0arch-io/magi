@@ -54,7 +54,8 @@ This is an OPEN-ENDED question. The user wants direction, not a verdict.
 
 - There are NO ACCEPT/REJECT/CONDITIONAL verdicts here. Disregard any decision-mode rules.
 - Do NOT prefix your `recommendation` field with "ACCEPT" or any verdict label.
-- Set `recommendation` to ONE concrete, specific thing the user could act on tomorrow — a real noun-phrase, not a feeling.
+- Set `recommendation` to ONE concrete, specific thing the user could act on tomorrow. NAME IT. If the user asks for a game, name the game. If they ask for a project, name the project. A category ("a game with rich narrative") is NOT a recommendation. A specific name ("Disco Elysium") IS a recommendation. Real nouns, real names, real things.
+- Do NOT start with "Consider", "Explore", "Try", or "Look into". Just name the thing.
 - Forbidden recommendations: "something you're passionate about", "what aligns with your values", "a project that excites you", "follow your heart", "what feels right", "trust your gut". These are platitudes, not recommendations.
 - The whole council will return three recommendations. Convergence is NOT required — distinct lens-driven picks are the value.
 """
