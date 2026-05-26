@@ -52,7 +52,9 @@ Total model footprint: ~23GB. Verify with `magi doctor`.
 ```bash
 magi                                    # open the REPL
 magi "should I take the job offer?"     # one-shot
-magi --invite banker --invite therapist "should I move cities?"
+magi doctor                             # check Ollama + models
+magi stats                              # decision patterns
+magi --invite banker "should I move?"   # invite a specialist
 ```
 
 Inside the REPL:
@@ -86,12 +88,12 @@ RESULT: CONSENSUS — Swift  (Swift:3)
 
 ### `open` — open-ended request for direction
 ```
-❯ what should i build for my next side project
+❯ i wanna play minecraft but ive been bored of a lot of games
 intake: open question
-MELCHIOR    RECOMMENDS: a data visualization tool for personal finance
-BALTHASAR   RECOMMENDS: a small-scale community garden in your neighborhood
-CASPER      RECOMMENDS: a personal growth journal with guided questions
-RESULT: 3 DISTINCT PICKS — your call: pick the lens that speaks to you
+MELCHIOR    RECOMMENDS: Disco Elysium
+BALTHASAR   RECOMMENDS: Stardew Valley
+CASPER      RECOMMENDS: Stardew Valley
+RESULT: PARTIAL OVERLAP — 2/3 agree on one pick  →  your call between 2 options
 ```
 
 `prediction` questions ("will my startup hit profitability?") are interpreted as decisions: *should they bet on X happening.*
@@ -119,6 +121,19 @@ Every deliberation auto-saves to `~/.config/magi/journal.jsonl`:
 /stats                         decision patterns and analytics
 /outcome <id> <what you did>   record what you actually decided
 ```
+
+## Memory
+
+MAGI learns from your past decisions. Before each deliberation, it searches your journal for similar questions. If it finds a match, the council sees what happened last time:
+
+```
+╭──────────────── you've asked this before ─────────────────╮
+│  ● 2026-05-02  "should I take the job offer?"  → YES     │
+│    ↳ you said: "took it, no regrets"                      │
+╰───────────────────────────────────────────────────────────╯
+```
+
+After each result, it surfaces patterns: whether you're revisiting a question, which member you tend to follow, and nudges you to record outcomes so the council gets smarter over time. Use `/outcome <id> <what you did>` to close the loop.
 
 ## Quiet mode
 

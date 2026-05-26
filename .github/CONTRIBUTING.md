@@ -18,7 +18,7 @@ Requires [Ollama](https://ollama.com) running locally for integration testing.
 pytest tests/ -v
 ```
 
-Tests cover validators, synthesis, config, journal, and intake parsing. They don't hit Ollama (no network required).
+Tests cover validators, synthesis, config, journal, memory, security, and intake parsing. They don't hit Ollama (no network required).
 
 ## Linting
 
@@ -36,7 +36,7 @@ These are non-negotiable. Read them before opening a PR.
 - **Hold-your-line over convergence.** Debate rounds must not pressure consensus. Convergence for its own sake is failure.
 - **Three is canon.** Don't add a 4th core member. Route through specialists.
 - **No Eva cosplay in prompts.** The MAGI/Melchior/Balthasar/Casper names are branding. The lenses are the personas, not the anime characters.
-- **Total model footprint under ~12GB.** Don't default to models that cause memory pressure on consumer hardware.
+- **Default models must run on 32GB+ machines.** Current defaults total ~25GB. Don't bump without checking the footprint.
 
 ## What to work on
 

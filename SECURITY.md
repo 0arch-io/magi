@@ -11,13 +11,17 @@ MAGI is a single-user CLI tool that communicates with a local Ollama instance. T
 ## Security Measures
 
 - OLLAMA_HOST validated (scheme, non-localhost warning)
-- All LLM output sanitized for terminal escape injection
+- All LLM output sanitized: ANSI escapes, OSC sequences (BEL and ST terminators), control characters, Unicode hazards (RTL overrides, zero-width chars, bidi isolates, BOM)
+- Rich markup injection blocked (all LLM-derived text rendered via Text objects, not markup strings)
 - HTTP response size capped at 1MB
-- Content-Type validation on all HTTP responses
-- User input capped at 10,000 characters
-- Journal writes are atomic (tempfile + rename)
+- Content-Type validation on all HTTP responses including the intake classifier
+- User input capped at 10,000 characters (including pipe reads)
+- Journal writes are atomic (tempfile + rename), orphaned temp files cleaned on startup
 - Symlink detection on all file paths
-- File permissions enforced and auto-repaired on access
+- File permissions enforced (0o700/0o600) and auto-repaired on access
+- Memory context fields sanitized and length-capped before prompt injection
+- Outcome text capped at 500 characters
+- Journal scan limited to 1000 entries
 - Exception messages sanitized to prevent hostname/URL leakage
 - No shell execution, eval, exec, or pickle anywhere in the codebase
 
