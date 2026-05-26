@@ -298,7 +298,7 @@ def _sanitize_llm_output(text: str) -> str:
 
 
 def _validate_response(response: httpx.Response) -> None:
-    _validate_response(response)
+    _check_response_size(response)
     _check_content_type(response)
 
 
