@@ -1,13 +1,31 @@
 """Persistent config at ~/.config/magi/config.toml. CLI flags always win."""
 
+import os
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from magi.personas import SPECIALIST_DEFAULT_MODELS, SPECIALIST_NAMES
 
 CONFIG_DIR = Path.home() / ".config" / "magi"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
+
+
+def _validated_ollama_host() -> str:
+    """Read OLLAMA_HOST from env, validate scheme, warn on non-localhost."""
+    raw = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        print(f"warning: OLLAMA_HOST scheme must be http or https, got {raw!r}", file=sys.stderr)
+        raw = "http://localhost:11434"
+    if parsed.hostname not in (None, "localhost", "127.0.0.1", "::1"):
+        print(f"warning: OLLAMA_HOST points to non-local host ({parsed.hostname}) — your questions will be sent there", file=sys.stderr)
+    return raw
+
+
+OLLAMA_HOST = _validated_ollama_host()
 
 _EXAMPLE_CONFIG = """\
 # MAGI configuration

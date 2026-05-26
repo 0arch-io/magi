@@ -1,5 +1,4 @@
 import asyncio
-import os
 import re
 from enum import Enum
 from typing import AsyncIterator
@@ -7,15 +6,16 @@ from typing import AsyncIterator
 import httpx
 from pydantic import BaseModel, Field, model_validator
 
+from magi.config import OLLAMA_HOST
 from magi.personas import (
     get_choice_prompt,
     get_decision_prompt,
     get_recommend_prompt,
 )
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
 KEEP_ALIVE = "30m"  # how long Ollama holds models resident between calls; pairs with startup warmup
+MAX_RESPONSE_BYTES = 1_048_576  # 1MB cap on Ollama response bodies
 
 
 class OllamaUnavailable(Exception):
@@ -289,6 +289,14 @@ def _ollama_options(temperature: float = 0.7, num_predict: int = 800) -> dict:
     }
 
 
+def _check_response_size(response: httpx.Response) -> None:
+    content_length = response.headers.get("content-length")
+    if content_length and int(content_length) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"Ollama response too large ({content_length} bytes, cap {MAX_RESPONSE_BYTES})")
+    if len(response.content) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"Ollama response too large ({len(response.content)} bytes, cap {MAX_RESPONSE_BYTES})")
+
+
 async def _consult(
     client: httpx.AsyncClient,
     model: str,
@@ -312,6 +320,7 @@ async def _consult(
     except httpx.ConnectError:
         raise OllamaUnavailable()
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     return PersonaResponse.model_validate_json(_strip_thinking(content))
 
@@ -385,6 +394,7 @@ async def _rebut(
         timeout=90.0,
     )
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     return Rebuttal.model_validate_json(_strip_thinking(content))
 
@@ -538,6 +548,7 @@ async def _consult_choice(
         timeout=90.0,
     )
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     parsed = ChoiceResponse.model_validate_json(_strip_thinking(content))
     parsed.chosen_option = _normalize_option(parsed.chosen_option, options)
@@ -610,6 +621,7 @@ async def _rebut_choice(
         timeout=90.0,
     )
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     parsed = ChoiceRebuttal.model_validate_json(_strip_thinking(content))
     parsed.final_choice = _normalize_option(parsed.final_choice, options)
@@ -732,6 +744,7 @@ async def _consult_recommend(
         timeout=90.0,
     )
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     parsed = RecommendResponse.model_validate_json(_strip_thinking(content))
     parsed.recommendation = _strip_persona_prefixes(parsed.recommendation)
@@ -791,6 +804,7 @@ async def _rebut_recommend(
         timeout=90.0,
     )
     response.raise_for_status()
+    _check_response_size(response)
     content = response.json()["message"]["content"]
     parsed = RecommendRebuttal.model_validate_json(_strip_thinking(content))
     parsed.final_recommendation = _strip_persona_prefixes(parsed.final_recommendation)

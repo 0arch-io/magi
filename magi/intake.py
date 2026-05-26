@@ -18,8 +18,9 @@ from enum import Enum
 import httpx
 from pydantic import BaseModel, Field
 
+from magi.config import OLLAMA_HOST
+
 CLASSIFIER_MODEL = os.environ.get("MAGI_CLASSIFIER_MODEL", "qwen3:4b")
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
 class QuestionClass(str, Enum):

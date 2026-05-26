@@ -6,8 +6,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from magi.config import CONFIG_PATH, load_config
-from magi.core import DEFAULT_MODELS, OLLAMA_HOST
+from magi.config import CONFIG_PATH, OLLAMA_HOST, load_config
+from magi.core import DEFAULT_MODELS
 
 REQUIRED_MODELS = list(DEFAULT_MODELS.values())
 

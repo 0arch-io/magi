@@ -2,6 +2,8 @@
 your indecision over time, and for revisiting the council's verdicts."""
 
 import json
+import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +13,15 @@ JOURNAL_PATH = JOURNAL_DIR / "journal.jsonl"
 
 
 def _ensure_dir() -> None:
-    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    JOURNAL_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _safe_path(path: Path) -> Path:
+    """Resolve the path and verify it hasn't been symlinked outside the config dir."""
+    resolved = path.resolve()
+    if not str(resolved).startswith(str(JOURNAL_DIR.resolve())):
+        raise OSError(f"journal path escapes config directory: {resolved}")
+    return resolved
 
 
 def save_entry(
@@ -36,8 +46,12 @@ def save_entry(
         "final_verdicts": final_verdicts,
         "user_outcome": None,
     }
-    with JOURNAL_PATH.open("a") as f:
-        f.write(json.dumps(entry) + "\n")
+    safe = _safe_path(JOURNAL_PATH)
+    fd = os.open(str(safe), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, (json.dumps(entry) + "\n").encode())
+    finally:
+        os.close(fd)
     return entry_id
 
 
@@ -45,8 +59,9 @@ def load_entries(limit: int | None = None) -> list[dict]:
     """Return entries newest first. None limit returns all."""
     if not JOURNAL_PATH.exists():
         return []
+    safe = _safe_path(JOURNAL_PATH)
     entries = []
-    with JOURNAL_PATH.open() as f:
+    with safe.open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -70,13 +85,14 @@ def find_entry(id_prefix: str) -> dict | None:
 
 
 def set_user_outcome(id_prefix: str, outcome_text: str) -> bool:
-    """Mark what the user actually did/didn't do. Rewrites the file.
+    """Mark what the user actually did/didn't do. Uses atomic file replacement.
     Returns True if matched, False otherwise."""
     if not JOURNAL_PATH.exists():
         return False
+    safe = _safe_path(JOURNAL_PATH)
     entries = []
     matched = False
-    with JOURNAL_PATH.open() as f:
+    with safe.open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -90,7 +106,13 @@ def set_user_outcome(id_prefix: str, outcome_text: str) -> bool:
                 matched = True
             entries.append(entry)
     if matched:
-        with JOURNAL_PATH.open("w") as f:
-            for entry in entries:
-                f.write(json.dumps(entry) + "\n")
+        fd, tmp_path = tempfile.mkstemp(dir=str(JOURNAL_DIR), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                for entry in entries:
+                    f.write(json.dumps(entry) + "\n")
+            os.replace(tmp_path, str(safe))
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
     return matched

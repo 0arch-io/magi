@@ -3,7 +3,8 @@ from typing import AsyncIterator
 
 import httpx
 
-from magi.core import KEEP_ALIVE, OLLAMA_HOST
+from magi.config import OLLAMA_HOST
+from magi.core import KEEP_ALIVE
 
 # Cold load of a 7B model from disk can take 30-60s on memory-pressured Macs.
 WARMUP_TIMEOUT = 180.0

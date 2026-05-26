@@ -121,9 +121,17 @@ def debate_status_panel(statuses: dict[str, str], rebuttals: dict, round_num: in
     return Panel(text, title=title, border_style="magenta")
 
 
+def _sanitize_error(exc: Exception) -> str:
+    """Show exception type without leaking full URLs or hostnames."""
+    msg = str(exc)
+    if "http://" in msg or "https://" in msg:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {msg[:120]}"
+
+
 def _persona_panel(name: str, result: PersonaResponse | Exception) -> Panel:
     if isinstance(result, Exception):
-        body = Text(f"FAILED: {type(result).__name__}: {result}", style="red")
+        body = Text(f"FAILED: {_sanitize_error(result)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     color = VERDICT_COLOR[result.verdict]
@@ -145,7 +153,7 @@ def _debate_panel(
     round_num: int,
 ) -> Panel:
     if isinstance(rebuttal, Exception):
-        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        body = Text(f"DEBATE FAILED: {_sanitize_error(rebuttal)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     if rebuttal is None:
@@ -237,7 +245,7 @@ def choice_debate_status_panel(statuses: dict[str, str], rebuttals: dict, round_
 
 def _choice_panel(name: str, result: ChoiceResponse | Exception) -> Panel:
     if isinstance(result, Exception):
-        body = Text(f"FAILED: {type(result).__name__}: {result}", style="red")
+        body = Text(f"FAILED: {_sanitize_error(result)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     body = Text()
@@ -255,7 +263,7 @@ def _choice_debate_panel(
     round_num: int,
 ) -> Panel:
     if isinstance(rebuttal, Exception):
-        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        body = Text(f"DEBATE FAILED: {_sanitize_error(rebuttal)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     if rebuttal is None:
@@ -344,7 +352,7 @@ def recommend_debate_status_panel(statuses: dict[str, str], rebuttals: dict, rou
 
 def _recommend_panel(name: str, result: RecommendResponse | Exception) -> Panel:
     if isinstance(result, Exception):
-        body = Text(f"FAILED: {type(result).__name__}: {result}", style="red")
+        body = Text(f"FAILED: {_sanitize_error(result)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     body = Text()
@@ -362,7 +370,7 @@ def _recommend_debate_panel(
     round_num: int,
 ) -> Panel:
     if isinstance(rebuttal, Exception):
-        body = Text(f"DEBATE FAILED: {type(rebuttal).__name__}: {rebuttal}", style="red")
+        body = Text(f"DEBATE FAILED: {_sanitize_error(rebuttal)}", style="red")
         return Panel(body, title=f"[bold red]{name}[/bold red]", border_style="red")
 
     if rebuttal is None:
