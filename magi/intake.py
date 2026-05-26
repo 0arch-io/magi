@@ -86,7 +86,9 @@ async def classify(question: str) -> Classification:
             timeout=30.0,
         )
         response.raise_for_status()
-        content = response.json()["message"]["content"]
+        from magi.core import _sanitize_llm_output, _validate_response
+        _validate_response(response)
+        content = _sanitize_llm_output(response.json()["message"]["content"])
         return Classification.model_validate_json(content)
 
 

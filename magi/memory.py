@@ -39,8 +39,11 @@ class MemoryHit:
     timestamp: str
 
 
+MAX_JOURNAL_SCAN = 1000
+
+
 def search(question: str, threshold: float = 0.25, limit: int = 3) -> list[MemoryHit]:
-    entries = load_entries()
+    entries = load_entries(limit=MAX_JOURNAL_SCAN)
     scored = []
     for entry in entries:
         past_q = entry.get("question", "")
@@ -59,15 +62,26 @@ def search(question: str, threshold: float = 0.25, limit: int = 3) -> list[Memor
     return scored[:limit]
 
 
+MAX_CONTEXT_FIELD_LEN = 200
+MAX_OUTCOME_CHARS = 500
+
+
+def _sanitize_context_field(text: str) -> str:
+    text = text[:MAX_CONTEXT_FIELD_LEN].replace("\n", " ").strip()
+    return re.sub(r"\[.*?\]", "", text).strip()
+
+
 def build_context(hits: list[MemoryHit]) -> str:
-    """Build a context block for the council from memory hits."""
     if not hits:
         return ""
     lines = ["[COUNCIL MEMORY — the user has asked similar questions before]"]
     for h in hits:
-        line = f"- {h.timestamp}: \"{h.question}\" → {h.synthesis}"
+        q = _sanitize_context_field(h.question)
+        s = _sanitize_context_field(h.synthesis)
+        line = f"- {h.timestamp}: \"{q}\" → {s}"
         if h.user_outcome:
-            line += f" | user later said: \"{h.user_outcome}\""
+            o = _sanitize_context_field(h.user_outcome)
+            line += f" | user later said: \"{o}\""
         lines.append(line)
     lines.append("")
     lines.append("[CURRENT QUESTION]")
@@ -86,7 +100,7 @@ class Patterns:
 
 def detect_patterns(question: str, entries: list[dict] | None = None) -> Patterns:
     if entries is None:
-        entries = load_entries()
+        entries = load_entries(limit=MAX_JOURNAL_SCAN)
 
     total = len(entries)
     outcomes_recorded = sum(1 for e in entries if e.get("user_outcome"))

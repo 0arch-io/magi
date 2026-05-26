@@ -75,7 +75,8 @@ def cli(
 
     pipe_input = None
     if not sys.stdin.isatty():
-        pipe_input = sys.stdin.read().strip()
+        from magi.core import MAX_INPUT_CHARS
+        pipe_input = sys.stdin.read(MAX_INPUT_CHARS + 1).strip()
 
     if pipe_input:
         asyncio.run(run_oneshot(pipe_input, models, quiet=quiet))

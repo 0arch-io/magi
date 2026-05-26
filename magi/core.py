@@ -277,10 +277,6 @@ def _clean_recommendation(rec: str) -> str:
     rec = _sanitize_llm_output(rec.strip())
     rec = _strip_persona_prefixes(rec)
     rec = _REC_FILLER_PREFIX.sub("", rec).strip()
-    if ": " in rec:
-        before_colon = rec.split(": ", 1)[0]
-        if len(before_colon) >= 3 and len(before_colon) <= 80:
-            rec = before_colon
     return rec
 
 

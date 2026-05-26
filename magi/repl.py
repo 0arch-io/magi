@@ -139,6 +139,7 @@ def _handle_command(
             console.print("[red]usage: /outcome <id> <what you did>[/red]  [dim](e.g. /outcome a3f5b9c2 did it, no regrets)[/dim]")
         else:
             id_prefix, outcome_text = parts_arg
+            outcome_text = outcome_text[:500]
             if journal.set_user_outcome(id_prefix, outcome_text):
                 console.print(f"[dim]outcome recorded for [bold]{id_prefix}[/bold][/dim]")
             else:
