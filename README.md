@@ -32,25 +32,20 @@ The council always decides. CONDITIONAL verdicts require a concrete blocker: vag
 
 ## Install
 
+One command. Handles Python, Ollama, models, everything:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0arch-io/magi/main/install.sh | bash
+```
+
+Or if you prefer doing it yourself:
+
 ```bash
 pipx install git+https://github.com/0arch-io/magi
+ollama pull qwen3:14b && ollama pull phi4 && ollama pull hermes3:8b && ollama pull qwen3:4b
 ```
 
-Requires [Ollama](https://ollama.com) running locally with the default models pulled:
-
-```bash
-ollama pull qwen3:14b
-ollama pull phi4
-ollama pull hermes3:8b
-```
-
-Total footprint: ~23GB.
-
-Verify your setup:
-
-```bash
-magi doctor
-```
+Total model footprint: ~23GB. Verify with `magi doctor`.
 
 ## Use
 
