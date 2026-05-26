@@ -5,6 +5,7 @@ the council into the right verdict shape:
     choice      — pick between named options
     open        — open-ended request for direction
     prediction  — will X happen / what will happen (interpreted as bet)
+    noise       — greeting / test / gibberish; no question to deliberate
 
 Default classifier model is qwen3:4b (already loaded as BALTHASAR's default —
 zero extra memory cost). Falls back to `decision` on any classification
@@ -17,7 +18,6 @@ from enum import Enum
 import httpx
 from pydantic import BaseModel, Field
 
-
 CLASSIFIER_MODEL = os.environ.get("MAGI_CLASSIFIER_MODEL", "qwen3:4b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
@@ -27,6 +27,7 @@ class QuestionClass(str, Enum):
     CHOICE = "choice"
     OPEN = "open"
     PREDICTION = "prediction"
+    NOISE = "noise"
 
 
 class Classification(BaseModel):
@@ -36,7 +37,9 @@ class Classification(BaseModel):
             "decision: a yes/no question about ONE specific action ('should I take the job?', 'should I open source X?'). "
             "choice: pick between TWO OR MORE named options ('Swift or React Native?', 'Miami or Austin?'). "
             "open: open-ended request for direction with no fixed options ('what should I build?', 'i wanna make something cool'). "
-            "prediction: a question about whether something WILL happen ('will my startup hit profitability?', 'am I going to get accepted?')."
+            "prediction: a question about whether something WILL happen ('will my startup hit profitability?', 'am I going to get accepted?'). "
+            "noise: NOT a question — greetings ('hi', 'hello', 'sup'), tests ('test', 'asdf'), pure punctuation ('???'), acknowledgements ('ok thanks'). "
+            "If the input has ANY question structure (a '?', a 'should', 'or', 'what', 'will', 'how'), it is NOT noise."
         ),
     )
     options: list[str] = Field(
@@ -44,17 +47,18 @@ class Classification(BaseModel):
         description=(
             "ONLY for choice questions: the named options the user is choosing between, in the order mentioned. "
             "Each option is a short noun/phrase (e.g. ['Swift', 'React Native']). "
-            "Empty list for decision/open/prediction."
+            "Empty list for decision/open/prediction/noise."
         ),
     )
 
 
-_CLASSIFIER_SYSTEM = """You classify a question into ONE of four shapes so a downstream system knows how to vote on it.
+_CLASSIFIER_SYSTEM = """You classify a user's input into ONE of five shapes so a downstream system knows how to handle it.
 
 decision    — yes/no question about ONE specific action. Examples: "should I take the job?", "should I move out?", "should we ship this?"
 choice      — pick between two or more named options. Examples: "Swift or React Native?", "Miami, Austin, or Denver?", "should I go to MIT or Stanford?"
 open        — open-ended ask for direction with no fixed options. Examples: "what should I build?", "i wanna make a new project something cool", "what do I do with my life?"
 prediction  — will X happen / forecast. Examples: "will my startup hit profitability?", "am I going to get accepted?", "is the market going to crash?"
+noise       — NOT a question. Greetings, tests, gibberish, acknowledgements. The council has nothing to deliberate. Examples: "hello", "hi", "hey", "yo", "sup", "test", "testing", "asdf", "???", "ok thanks", "got it", "cool", "helllo" (typo'd greeting), single ambiguous words with no question mark ("water", "money").
 
 For choice questions ONLY, also extract the named options. Keep each option short (a single noun or short phrase). Order them as the user mentioned them.
 
@@ -63,7 +67,11 @@ Edge cases:
 - "what should I do, A or B" — also CHOICE (options: [A, B]).
 - "should I do anything" / "what should I do" with no options — OPEN, not decision.
 - "should I bet on X" — DECISION, not prediction (already framed as a decision).
-- Vague pitches like "i wanna build something cool" — OPEN.
+- Vague pitches like "i wanna build something cool" — OPEN, not noise.
+- "hi, should I take the job?" — DECISION. A greeting prefix doesn't make a real question into noise.
+- "water?" — DECISION (single-word question with '?' is a real ask, NOT noise).
+- "hello" / "helllo" / "hi" with no other content — NOISE.
+- ANY input with a '?', 'should', 'or', 'what', 'will', 'how', 'is it' — NOT noise.
 
 Return only the classification. Do not explain.
 """

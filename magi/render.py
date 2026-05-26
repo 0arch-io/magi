@@ -12,7 +12,6 @@ from magi.core import (
     Verdict,
 )
 
-
 VERDICT_COLOR = {
     Verdict.ACCEPT: "green",
     Verdict.REJECT: "red",
@@ -46,6 +45,7 @@ HELP_TEXT = """[bold]commands[/bold]
   [cyan]/melchior[/cyan] <model>      assign a different model to a member
   [cyan]/reset[/cyan]                 reset to defaults; dismiss all specialists
   [cyan]/journal[/cyan]               show your past deliberations
+  [cyan]/stats[/cyan]                 decision patterns and analytics
   [cyan]/outcome[/cyan] <id> <text>   record what you actually did/didn't do
   [cyan]/clear[/cyan]                 clear the screen
   [cyan]/exit[/cyan]                  exit the MAGI
@@ -58,11 +58,11 @@ HELP_TEXT = """[bold]commands[/bold]
 [bold]deliberation rounds[/bold]
   1. each member votes independently from their own lens
   2+ they read each other's positions and argue; verdicts can shift
-     keeps going until consensus or up to 4 rounds total
+     keeps going until consensus or up to 3 rounds total
 
 [bold]outcomes[/bold]
   [green]CONSENSUS[/green]   all three agree — clean answer
-  [yellow]DEADLOCK[/yellow]   they could not agree after 4 rounds — your call
+  [yellow]DEADLOCK[/yellow]   they could not agree after 3 rounds — your call
 """
 
 
@@ -440,3 +440,49 @@ def render_journal(entries: list[dict], console: Console) -> None:
             text.append(f"            ↳ outcome: {entry['user_outcome']}\n", style="bold green")
         text.append("\n")
     console.print(Panel(text, title="[bold]decision journal[/bold]", border_style="dim"))
+
+
+def render_stats(entries: list[dict], console: Console) -> None:
+    if not entries:
+        console.print("[dim]no deliberations yet — stats will appear after your first question[/dim]")
+        return
+
+    total = len(entries)
+    consensus_count = sum(1 for e in entries if e.get("outcome") == "consensus")
+    deadlock_count = sum(1 for e in entries if e.get("outcome") in ("deadlock", "split"))
+    picks_count = sum(1 for e in entries if e.get("outcome") == "picks")
+    other_count = total - consensus_count - deadlock_count - picks_count
+    outcomes_recorded = sum(1 for e in entries if e.get("user_outcome"))
+
+    avg_rounds = 0
+    rounds_entries = [e for e in entries if e.get("rounds")]
+    if rounds_entries:
+        avg_rounds = sum(e["rounds"] for e in rounds_entries) / len(rounds_entries)
+
+    text = Text()
+    text.append(f"  total deliberations:  {total}\n", style="bold")
+    text.append(f"  consensus:            {consensus_count}", style="green")
+    if total > 0:
+        text.append(f"  ({consensus_count * 100 // total}%)", style="dim")
+    text.append("\n")
+    text.append(f"  deadlock/split:       {deadlock_count}", style="yellow")
+    if total > 0:
+        text.append(f"  ({deadlock_count * 100 // total}%)", style="dim")
+    text.append("\n")
+    if picks_count:
+        text.append(f"  open (distinct picks):{picks_count:>2}\n", style="blue")
+    if other_count:
+        text.append(f"  other:                {other_count}\n", style="dim")
+    text.append(f"  avg rounds:           {avg_rounds:.1f}\n", style="dim")
+    text.append(f"  outcomes recorded:    {outcomes_recorded}/{total}\n", style="dim")
+
+    console.print(Panel(text, title="[bold]decision stats[/bold]", border_style="dim"))
+
+    if deadlock_count >= 3:
+        deadlocks = [e for e in entries if e.get("outcome") in ("deadlock", "split")]
+        text2 = Text()
+        for e in deadlocks[:10]:
+            ts = e.get("timestamp", "")[:10]
+            text2.append(f"  {ts}  ", style="dim")
+            text2.append(f"{e.get('question', '')[:80]}\n", style="italic")
+        console.print(Panel(text2, title="[bold yellow]recent deadlocks[/bold yellow]", border_style="yellow"))

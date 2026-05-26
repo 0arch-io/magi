@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 JOURNAL_DIR = Path.home() / ".config" / "magi"
 JOURNAL_PATH = JOURNAL_DIR / "journal.jsonl"
 

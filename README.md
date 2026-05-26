@@ -1,8 +1,12 @@
 # MAGI
 
+[![CI](https://github.com/0arch-io/magi/actions/workflows/ci.yml/badge.svg)](https://github.com/0arch-io/magi/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Three local open-source models convene as a personal decision council and DECIDE.
 
-Named for the Nerv supercomputer in *Neon Genesis Evangelion* — three perspectives, one verdict. Built for indecisive people who want a council, not another chatbot.
+Named for the Nerv supercomputer in *Neon Genesis Evangelion*: three perspectives, one verdict. Built for indecisive people who want a council, not another chatbot.
 
 ```
     ███╗   ███╗ █████╗  ██████╗ ██╗
@@ -24,7 +28,7 @@ You bring a question. Three models, each running a distinct lens, debate it acro
 - **BALTHASAR** (`qwen3:4b`) — long-term wellbeing, relationships, what gets sacrificed quietly. Asks who gets hurt if it fails, what's irreversible.
 - **CASPER** (`mistral:latest`) — desire, values, identity. Sees through performance, asks what you'd regret NOT doing.
 
-The council always decides. CONDITIONAL verdicts require a concrete blocker — vague hedges are coerced to ACCEPT. If the three disagree, you get DEADLOCK and the call goes back to you, but with three distinct readings to argue with.
+The council always decides. CONDITIONAL verdicts require a concrete blocker: vague hedges are coerced to ACCEPT. If the three disagree, you get DEADLOCK and the call goes back to you, but with three distinct readings to argue with.
 
 ## Install
 
@@ -40,7 +44,13 @@ ollama pull qwen3:4b
 ollama pull mistral
 ```
 
-Total footprint ≈ 11GB.
+Total footprint: ~11GB.
+
+Verify your setup:
+
+```bash
+magi doctor
+```
 
 ## Use
 
@@ -89,7 +99,7 @@ CASPER      RECOMMENDS: a personal growth journal with guided questions
 RESULT: 3 DISTINCT PICKS — your call: pick the lens that speaks to you
 ```
 
-`prediction` questions ("will my startup hit profitability?") are interpreted as decisions — *should they bet on X happening.*
+`prediction` questions ("will my startup hit profitability?") are interpreted as decisions: *should they bet on X happening.*
 
 ## Specialists
 
@@ -105,16 +115,47 @@ The core MAGI is fixed at three. For higher-stakes questions, invite a specialis
 
 Specialists join the council and debate alongside the core three. `/dismiss <name>` to remove. They can be invited mid-thread.
 
-## Journal
+## Journal & Stats
 
 Every deliberation auto-saves to `~/.config/magi/journal.jsonl`:
 
 ```
 /journal                       show recent deliberations
+/stats                         decision patterns and analytics
 /outcome <id> <what you did>   record what you actually decided
 ```
 
-Useful for spotting patterns ("you DEADLOCKED 8 times this month, mostly on relationship questions").
+## Quiet mode
+
+For scripting, `-q` suppresses all panels and outputs only the verdict line:
+
+```bash
+magi -q "should I deploy on Friday?"
+# CONSENSUS — YES  (3A · 0C · 0R)
+
+echo "swift or flutter?" | magi -q
+# CONSENSUS — Swift  (Swift:3)
+```
+
+Works with pipes too: `echo "should I?" | magi -q`
+
+## Config file
+
+Persistent model overrides and auto-invite specialists:
+
+```bash
+magi --init-config    # writes ~/.config/magi/config.toml with examples
+```
+
+```toml
+[models]
+melchior = "qwen3:8b"
+
+[specialists]
+invite = ["banker"]
+```
+
+CLI flags always override the config file.
 
 ## Customize
 
@@ -146,15 +187,19 @@ OLLAMA_HOST=http://192.168.1.100:11434 magi
 ## Caveats
 
 - **Math is hallucinated.** Small models confidently get arithmetic wrong. For prediction questions involving numbers (runway, breakeven, growth rates), trust the directional verdict, not the specific figures.
-- **The council DECIDES.** It will not refuse to vote, even on questions where it lacks information. That's a feature — refusing to decide is the worst outcome — but the corollary is that vague questions get vague-but-decisive answers.
+- **The council DECIDES.** It will not refuse to vote, even on questions where it lacks information. That's a feature: refusing to decide is the worst outcome. The corollary is that vague questions get vague-but-decisive answers.
 - **Three is canon.** Don't try to add a fourth core member. Route through specialists instead.
 
 ## Why
 
-Coin-flip 2.0. The value is the experience: three independent reads, watching them debate each other by name, surfacing your real preference by friction. It scales from "should I have coffee at 8pm" to "should I quit my job" — invite specialists for the heavy ones.
+Coin-flip 2.0. The value is the experience: three independent reads, watching them debate each other by name, surfacing your real preference by friction. It scales from "should I have coffee at 8pm" to "should I quit my job": invite specialists for the heavy ones.
 
 Built explicitly for people who can't decide on their own. The council won't let you wallow.
 
+## Contributing
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).

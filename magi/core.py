@@ -8,17 +8,32 @@ import httpx
 from pydantic import BaseModel, Field, model_validator
 
 from magi.personas import (
-    PERSONAS,
     get_choice_prompt,
     get_decision_prompt,
     get_recommend_prompt,
-    get_system_prompt,
 )
-
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MAX_DELIBERATION_ROUNDS = 3  # 1 vote + up to 2 debate rounds (was 4 — late rounds added little)
 KEEP_ALIVE = "30m"  # how long Ollama holds models resident between calls; pairs with startup warmup
+
+
+class OllamaUnavailable(Exception):
+    """Raised when Ollama can't be reached. Carries a user-friendly message."""
+    def __init__(self, host: str = OLLAMA_HOST):
+        super().__init__(
+            f"cannot connect to Ollama at {host}\n\n"
+            "  install:  https://ollama.com\n"
+            "  start:    ollama serve\n"
+            "  custom:   OLLAMA_HOST=http://host:port magi"
+        )
+
+
+def _wrap_connect_error(exc: Exception) -> Exception:
+    """Convert httpx.ConnectError to a friendly OllamaUnavailable."""
+    if isinstance(exc, httpx.ConnectError):
+        return OllamaUnavailable()
+    return exc
 
 
 DEFAULT_MODELS = {
@@ -39,7 +54,10 @@ _BANNED_CONDITION_PHRASES = (
     "realistic timeline", "long-term goals", "personal values",
     "regularly reassess", "explore additional resources",
     "concise mission statement", "balance ambition", "specific aspects",
-    "core values",
+    "core values", "well-defined goals", "proper preparation",
+    "adequate funding", "solid foundation", "strong commitment",
+    "careful consideration", "thorough research", "good understanding",
+    "appropriate measures", "reasonable expectations",
 )
 
 
@@ -135,6 +153,12 @@ _BANNED_RECOMMENDATION_PHRASES = (
     "find your purpose", "discover your purpose",
     "anything that interests you", "whatever you want",
     "trust your gut",
+    "consider building", "consider creating", "consider developing",
+    "consider starting", "consider exploring", "consider pursuing",
+    "look into", "explore options", "explore opportunities",
+    "a project that addresses", "a project that solves",
+    "something that combines", "something that leverages",
+    "an initiative that", "a venture that",
 )
 
 
@@ -272,18 +296,21 @@ async def _consult(
     messages: list[dict],
 ) -> PersonaResponse:
     schema = PersonaResponse.model_json_schema()
-    response = await client.post(
-        f"{OLLAMA_HOST}/api/chat",
-        json={
-            "model": model,
-            "messages": [{"role": "system", "content": system}] + messages,
-            "format": schema,
-            "stream": False,
-            "keep_alive": KEEP_ALIVE,
-            "options": _ollama_options(temperature=0.7),
-        },
-        timeout=90.0,
-    )
+    try:
+        response = await client.post(
+            f"{OLLAMA_HOST}/api/chat",
+            json={
+                "model": model,
+                "messages": [{"role": "system", "content": system}] + messages,
+                "format": schema,
+                "stream": False,
+                "keep_alive": KEEP_ALIVE,
+                "options": _ollama_options(temperature=0.7),
+            },
+            timeout=90.0,
+        )
+    except httpx.ConnectError:
+        raise OllamaUnavailable()
     response.raise_for_status()
     content = response.json()["message"]["content"]
     return PersonaResponse.model_validate_json(_strip_thinking(content))

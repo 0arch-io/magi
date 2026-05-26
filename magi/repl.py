@@ -1,4 +1,3 @@
-import asyncio
 
 from rich.console import Console
 from rich.live import Live
@@ -11,6 +10,7 @@ from magi.core import (
     ChoiceRebuttal,
     ChoiceResponse,
     Deliberation,
+    OllamaUnavailable,
     PersonaResponse,
     Rebuttal,
     RecommendRebuttal,
@@ -48,6 +48,7 @@ from magi.render import (
     render_intake,
     render_journal,
     render_recommend_debate_round,
+    render_stats,
     render_synthesis,
     vote_status_panel,
     warmup_status_panel,
@@ -58,13 +59,22 @@ from magi.warmup import warmup_models
 async def warm_council(models: dict[str, str], console: Console) -> None:
     """Pre-load council models into Ollama before the first deliberation so
     cold-load doesn't time out the first question. Non-fatal — a failed warm
-    just shows in red; user can still try, deliberation has its own timeout."""
+    just shows in red; user can still try, deliberation has its own timeout.
+    Raises OllamaUnavailable if Ollama itself can't be reached."""
+    import httpx
     statuses: dict[str, tuple[str, str]] = {n: (m, "loading") for n, m in models.items()}
+    all_connect_failed = True
     with Live(warmup_status_panel(statuses), console=console, refresh_per_second=4) as live:
         async for name, model, err in warmup_models(models):
+            if err is None:
+                all_connect_failed = False
+            elif not isinstance(err, httpx.ConnectError):
+                all_connect_failed = False
             statuses[name] = (model, "ready" if err is None else f"failed: {type(err).__name__}")
             live.update(warmup_status_panel(statuses))
     console.print()
+    if all_connect_failed and models:
+        raise OllamaUnavailable()
 
 
 def _print_council_roster(console: Console, models: dict[str, str]) -> None:
@@ -120,6 +130,9 @@ def _handle_command(
     elif head == "journal":
         entries = journal.load_entries(limit=20)
         render_journal(entries, console)
+    elif head == "stats":
+        entries = journal.load_entries()
+        render_stats(entries, console)
     elif head == "outcome":
         parts_arg = arg.split(maxsplit=1)
         if len(parts_arg) < 2:
@@ -209,7 +222,12 @@ async def run_repl(initial_models: dict[str, str]) -> None:
     console.clear()
     print_banner(console, initial_models)
     models = dict(initial_models)
-    await warm_council(models, console)
+    try:
+        await warm_council(models, console)
+    except OllamaUnavailable as e:
+        console.print(f"[red bold]{e}[/red bold]")
+        console.print("[dim]start Ollama and try again[/dim]")
+        return
     deliberation: Deliberation | None = None
 
     while True:
@@ -239,6 +257,11 @@ async def run_repl(initial_models: dict[str, str]) -> None:
         except KeyboardInterrupt:
             console.print("\n[yellow]deliberation interrupted[/yellow]")
 
+        # If the noise bounce popped the only user message, drop the empty
+        # deliberation so the next prompt shows ❯ (fresh thread) not ❯❯ (continue).
+        if deliberation is not None and deliberation.turn == 0:
+            deliberation = None
+
 
 async def run_full_deliberation(
     deliberation: Deliberation, models: dict[str, str], console: Console
@@ -252,6 +275,19 @@ async def run_full_deliberation(
     question = user_msgs[-1]
 
     classification = await classify_safe(question)
+
+    if classification.question_class == QuestionClass.NOISE:
+        # Roll back the polluting user message so the next real question doesn't
+        # see "hello" sitting in every persona's history.
+        for hist in deliberation.histories.values():
+            if hist and hist[-1]["role"] == "user":
+                hist.pop()
+        console.print(
+            "[dim italic]the council convenes for questions, not greetings — "
+            "try \"should I X?\" or \"A or B?\"[/dim italic]"
+        )
+        return
+
     render_intake(classification.question_class.value, classification.options, console)
 
     if classification.question_class == QuestionClass.CHOICE and len(classification.options) >= 2:
@@ -639,9 +675,72 @@ def _save_journal(
         console.print(f"[dim red]journal write failed: {e}[/dim red]")
 
 
-async def run_oneshot(question: str, models: dict[str, str]) -> None:
+async def _run_quiet_deliberation(
+    deliberation: Deliberation, models: dict[str, str]
+) -> str:
+    """Run a full deliberation silently, return only the synthesis string."""
+    sample_history = next(iter(deliberation.histories.values()), [])
+    user_msgs = [m["content"] for m in sample_history if m["role"] == "user"]
+    if not user_msgs:
+        return "ERROR: no question"
+    question = user_msgs[-1]
+
+    classification = await classify_safe(question)
+
+    if classification.question_class == QuestionClass.NOISE:
+        return "NOISE: not a question"
+
+    if classification.question_class == QuestionClass.CHOICE and len(classification.options) >= 2:
+        final_positions: dict = {}
+        final_outcome = "incomplete"
+        async for event in iterative_choose(deliberation, models, classification.options):
+            if event[0] == "done":
+                _, final_outcome, final_positions = event
+        return synthesize_choice(final_positions, final_outcome, classification.options)
+
+    if classification.question_class == QuestionClass.OPEN:
+        final_positions = {}
+        async for event in iterative_recommend(deliberation, models):
+            if event[0] == "done":
+                _, _, final_positions = event
+        return synthesize_recommend(final_positions)
+
+    final_positions = {}
+    final_outcome = "incomplete"
+    async for event in iterative_deliberate(deliberation, models):
+        if event[0] == "done":
+            _, final_outcome, final_positions = event
+    return synthesize(final_positions, outcome=final_outcome)
+
+
+async def run_stats() -> None:
     console = Console()
-    await warm_council(models, console)
+    entries = journal.load_entries()
+    render_stats(entries, console)
+
+
+async def run_oneshot(question: str, models: dict[str, str], quiet: bool = False) -> None:
+    if quiet:
+        from io import StringIO
+        buf_console = Console(file=StringIO(), force_terminal=False)
+        try:
+            await warm_council(models, buf_console)
+        except OllamaUnavailable as e:
+            import sys
+            print(str(e), file=sys.stderr)
+            sys.exit(2)
+        deliberation = Deliberation(list(models.keys()))
+        deliberation.add_user_message(question)
+        synthesis_text = await _run_quiet_deliberation(deliberation, models)
+        print(synthesis_text)
+        return
+
+    console = Console()
+    try:
+        await warm_council(models, console)
+    except OllamaUnavailable as e:
+        console.print(f"[red bold]{e}[/red bold]")
+        return
     deliberation = Deliberation(list(models.keys()))
     deliberation.add_user_message(question)
     await run_full_deliberation(deliberation, models, console)
